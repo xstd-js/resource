@@ -1,0 +1,43 @@
+{
+  "name": "@xstd/resource",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./index.js",
+  "scripts": {
+    "fb:build": "node fabrique/actions/cli/build.cli.js",
+    "fb:format": "prettier --write --ignore-unknown --config ./.prettierrc \"src/**/*.{js,jsx,ts,tsx,html,css,scss}\"",
+    "fb:test": "vitest",
+    "fb:test:coverage": "vitest run --coverage",
+    "fb:bench": "vitest bench",
+    "fb:typedoc": "typedoc --options typedoc.json --tsconfig tsconfig.json",
+    "fb:prod": "node fabrique/actions/cli/build-and-publish.cli.js --mode prod",
+    "fb:dev": "node fabrique/actions/cli/build-and-publish.cli.js --mode dev",
+    "fb:rc": "node fabrique/actions/cli/build-and-publish.cli.js --mode rc"
+  },
+  "description": "Objects with lifetime",
+  "keywords": [],
+  "author": "Valentin RICHARD",
+  "license": "MIT",
+  "access": "public",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xstd-js/resource.git"
+  },
+  "devDependencies": {
+    "@types/node": "^24.1.0",
+    "@vitest/coverage-istanbul": "^3.2.4",
+    "prettier": "^3.6.2",
+    "prettier-plugin-organize-imports": "^4.2.0",
+    "typedoc": "^0.28.7",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "yarn@4.9.2",
+  "fabrique": {
+    "version": "1.0.0",
+    "type": "lib"
+  },
+  "dependencies": {
+    "@xstd/abortable": "^1.2.1"
+  }
+}

@@ -1,0 +1,45 @@
+import { type Abortable, mergeAbortSignals } from '@xstd/abortable';
+
+export interface AsyncTask<GReturn> {
+  (signal: AbortSignal): PromiseLike<GReturn> | GReturn;
+}
+
+/**
+ * @deprecated
+ */
+export class AsyncTaskRunner {
+  readonly #signal: AbortSignal;
+  readonly #tasks: Promise<unknown>[];
+
+  constructor(signal: AbortSignal) {
+    this.#signal = signal;
+    this.#tasks = [];
+  }
+
+  async runTask<GReturn>(
+    task: AsyncTask<GReturn> | PromiseLike<GReturn>,
+    { signal }: Abortable = {},
+  ): Promise<GReturn> {
+    signal?.throwIfAborted();
+
+    const controller: AbortController = new AbortController();
+
+    const taskPromise: Promise<GReturn> =
+      typeof task === 'function' ?
+        Promise.try(task, mergeAbortSignals([this.#signal, controller.signal, signal]))
+      : Promise.resolve(task);
+
+    this.#tasks.push(taskPromise);
+
+    try {
+      return await taskPromise;
+    } finally {
+      controller.abort();
+      this.#tasks.splice(this.#tasks.indexOf(taskPromise), 1);
+    }
+  }
+
+  async untilAllFinished(): Promise<void> {
+    await Promise.allSettled(this.#tasks);
+  }
+}
