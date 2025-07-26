@@ -1,0 +1,141 @@
+import { Abortable, abortify } from '@xstd/abortable';
+
+export interface CloseResource {
+  (reason: unknown): PromiseLike<void> | void;
+}
+
+export interface ResourceTask<GReturn> {
+  (): GReturn;
+}
+
+export interface ResourceAsyncTask<GReturn> {
+  (signal: AbortSignal): PromiseLike<GReturn> | GReturn;
+}
+
+export class Resource implements AsyncDisposable {
+  readonly #close: CloseResource;
+  #closed: boolean;
+  #closeReason: unknown;
+  readonly #untilClosed: PromiseWithResolvers<unknown>;
+  readonly #pendingTasks: Map<ResourceAsyncTask<any>, Promise<any>>;
+
+  #controller: AbortController | undefined;
+
+  constructor(close: CloseResource) {
+    this.#close = close;
+    this.#closed = false;
+    this.#untilClosed = Promise.withResolvers<unknown>();
+    this.#pendingTasks = new Map<ResourceAsyncTask<any>, Promise<any>>();
+
+    // this.#controller = new AbortController();
+  }
+
+  /* RUN TASKS */
+
+  task<GReturn>(task: ResourceTask<GReturn>): GReturn {
+    this.throwIfClosed();
+    return task();
+  }
+
+  async asyncTask<GReturn>(task: ResourceAsyncTask<GReturn>): Promise<GReturn> {
+    this.throwIfClosed();
+
+    if (this.#pendingTasks.has(task)) {
+      throw new Error('Task already running.');
+    }
+
+    const promise: Promise<GReturn> = Promise.try((): PromiseLike<GReturn> | GReturn => {
+      return task(this.signal);
+    }).finally((): void => {
+      this.#pendingTasks.delete(task);
+    });
+
+    this.#pendingTasks.set(task, promise);
+
+    return promise;
+  }
+
+  /* FORK */
+
+  fork<GResource extends Resource>(resource: GResource): GResource {
+    this.asyncTask(() => {
+      return this.untilClosed().then(() => {
+
+      });
+    });
+
+  }
+
+  childOf(resource: Resource): this {
+    resource.signal.addEventListener(
+      'abort',
+      (): void => {
+        void this.close(resource.signal.reason);
+      },
+      {
+        signal: this.signal,
+      },
+    );
+    return this;
+  }
+
+  /* CLOSE */
+
+  get signal(): AbortSignal {
+    if (this.#controller === undefined) {
+      this.#controller = new AbortController();
+
+      if (this.#closed) {
+        this.#controller.abort(this.#closeReason);
+      }
+    }
+    return this.#controller.signal;
+  }
+
+  get closed(): boolean {
+    return this.#closed;
+  }
+
+  get closeReason(): unknown {
+    return this.#closeReason;
+  }
+
+  throwIfClosed(direct: boolean = false): void {
+    if (this.#closed) {
+      throw direct ?
+          this.#closeReason
+        : new Error('Resource closed.', {
+            cause: this.#closeReason,
+          });
+    }
+  }
+
+  untilClosed(options?: Abortable): Promise<unknown> {
+    return abortify<unknown>(this.#untilClosed.promise, options);
+  }
+
+  async close(reason?: unknown): Promise<void> {
+    if (!this.#closed) {
+      this.#closed = true;
+      this.#closeReason = reason;
+
+      if (this.#controller !== undefined) {
+        this.#controller.abort(reason);
+      }
+
+      Promise.allSettled(this.#pendingTasks)
+        .then((): PromiseLike<void> | void => {
+          return this.#close(reason);
+        })
+        .then((): void => {
+          this.#untilClosed.resolve(reason);
+        }, this.#untilClosed.resolve);
+    }
+
+    await this.#untilClosed.promise;
+  }
+
+  [Symbol.asyncDispose](): Promise<void> {
+    return this.close();
+  }
+}

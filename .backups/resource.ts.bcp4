@@ -1,0 +1,296 @@
+import { Abortable } from '@lirx/utils';
+import { EventEmitter, EventEmitterDispatchFunction } from '@xstd/event-emitter';
+
+/*---*/
+
+export interface CloseResource {
+  (reason: unknown): PromiseLike<void> | void;
+}
+
+export interface ResourceTask<GReturn> {
+  (): GReturn;
+}
+
+export interface ResourceAsyncTask<GReturn> {
+  (signal: AbortSignal): PromiseLike<GReturn> | GReturn;
+}
+
+export class Resource implements AsyncDisposable {
+  readonly #close: CloseResource;
+  readonly #controller: AbortController;
+  readonly #pendingTasks: Map<ResourceAsyncTask<any>, Promise<any>>;
+  #closePromise: Promise<void> | undefined;
+
+  constructor(close: CloseResource) {
+    this.#close = close;
+    this.#controller = new AbortController();
+    this.#pendingTasks = new Map<ResourceAsyncTask<any>, Promise<any>>();
+  }
+
+  /* RUN TASKS */
+
+  task<GReturn>(task: ResourceTask<GReturn>): GReturn {
+    this.#throwIfClosed();
+    return task();
+  }
+
+  async asyncTask<GReturn>(task: ResourceAsyncTask<GReturn>): Promise<GReturn> {
+    this.#throwIfClosed();
+
+    if (this.#pendingTasks.has(task)) {
+      throw new Error('Task already running.');
+    }
+
+    const promise: Promise<GReturn> = Promise.try((): PromiseLike<GReturn> | GReturn => {
+      return task(this.signal);
+    }).finally((): void => {
+      this.#pendingTasks.delete(task);
+    });
+
+    this.#pendingTasks.set(task, promise);
+
+    return promise;
+  }
+
+  /* DERIVE */
+
+  childOf(resource: Resource): this {
+    resource.signal.addEventListener(
+      'abort',
+      (): void => {
+        void this.close(resource.signal.reason);
+      },
+      {
+        signal: this.signal,
+      },
+    );
+    return this;
+  }
+
+  /* CLOSE */
+
+  #throwIfClosed(): void {
+    if (this.#controller.signal.aborted) {
+      throw new Error('Resource closed.', {
+        cause: this.#controller.signal.reason,
+      });
+    }
+  }
+
+  get signal(): AbortSignal {
+    return this.#controller.signal;
+  }
+
+  close(reason?: unknown): Promise<void> {
+    if (!this.#controller.signal.aborted) {
+      this.#controller.abort(reason);
+      this.#closePromise = Promise.allSettled(this.#pendingTasks).then(
+        (): PromiseLike<void> | void => {
+          return this.#close(reason);
+        },
+      );
+    }
+
+    return this.#closePromise!;
+  }
+
+  [Symbol.asyncDispose](): Promise<void> {
+    return this.close();
+  }
+}
+
+/*---*/
+
+export interface EmitterResourceInitFunction<GValue> {
+  (dispatch: EmitterResourceDispatchFunction<GValue>): CloseResource;
+}
+
+export interface EmitterResourceDispatchFunction<GValue> {
+  (value: GValue): void;
+}
+
+export class EmitterResource<GValue> extends Resource {
+  readonly #listeners: EventEmitterListener<GValue>[];
+
+  constructor(init: EmitterResourceInitFunction<GValue>) {
+    super(
+      init((value: GValue): void => {
+        this.#dispatch(value);
+      }),
+    );
+    this.#listeners = [];
+  }
+
+  #dispatch(value: GValue): void {
+    for (const listener of this.#listeners) {
+      listener(value);
+    }
+  }
+
+  listen(listener: EventEmitterListener<GValue>): Resource {
+    this.#listeners.push(listener);
+
+    return new Resource((): void => {
+      const index: number = this.#listeners.indexOf(listener);
+      if (index !== -1) {
+        this.#listeners.splice(index, 1);
+      }
+    }).childOf(this);
+  }
+}
+
+/*---*/
+
+export type WebSocketDownValue = ArrayBuffer | string;
+export type WebSocketUpValue = string | ArrayBufferLike | Blob | ArrayBufferView;
+
+export class WebSocketResource extends Resource {
+  static open(
+    url: string | URL,
+    protocols?: string | readonly string[],
+  ): Promise<WebSocketResource> {
+    return new Promise(
+      (resolve: (value: WebSocketResource) => void, reject: (error: unknown) => void): void => {
+        const webSocket: WebSocket = new WebSocket(url, protocols as string[]);
+        webSocket.binaryType = 'arraybuffer';
+
+        const controller: AbortController = new AbortController();
+
+        webSocket.addEventListener(
+          'open',
+          (): void => {
+            controller.abort();
+            resolve(new WebSocketResource(webSocket));
+          },
+          controller,
+        );
+
+        // "close": CloseEvent;
+        // "error": Event;
+        // "message": MessageEvent;
+        // "open": Event;
+
+        webSocket.addEventListener(
+          'error',
+          (): void => {
+            controller.abort();
+            reject(new Error('Websocket error.'));
+          },
+          controller,
+        );
+
+        webSocket.addEventListener(
+          'close',
+          (): void => {
+            controller.abort();
+            reject(new Error('Websocket closed.'));
+          },
+          controller,
+        );
+      },
+    );
+  }
+
+  readonly #webSocket: WebSocket;
+  readonly #down$: EmitterResource<WebSocketDownValue>;
+
+  protected constructor(webSocket: WebSocket) {
+    if (webSocket.readyState !== WebSocket.OPEN) {
+      throw new Error('Websocket not open.');
+    }
+
+    super((): void => {
+      this.#webSocket.close();
+    });
+
+    this.#webSocket = webSocket;
+
+    this.#webSocket.addEventListener(
+      'error',
+      (): void => {
+        void this.close(new Error('Websocket error.'));
+      },
+      {
+        signal: this.signal,
+      },
+    );
+
+    this.#webSocket.addEventListener(
+      'close',
+      (): void => {
+        void this.close(new Error('Websocket closed.'));
+      },
+      {
+        signal: this.signal,
+      },
+    );
+
+    this.#down$ = new EmitterResource<WebSocketDownValue>(
+      (dispatch: EventEmitterDispatchFunction<WebSocketDownValue>): CloseResource => {
+        const onMessage = (event: MessageEvent<WebSocketDownValue>): void => {
+          dispatch(event.data);
+        };
+
+        this.#webSocket.addEventListener('message', onMessage);
+
+        return (): void => {
+          this.#webSocket.removeEventListener('message', onMessage);
+        };
+      },
+    ).childOf(this);
+  }
+
+  get down$(): EmitterResource<WebSocketDownValue> {
+    return this.#down$;
+  }
+
+  send(payload: WebSocketUpValue): Promise<void> {
+    return this.asyncTask((signal: AbortSignal) => {
+      this.#webSocket.send(payload);
+      // TODO await flush
+    });
+  }
+}
+
+/*---*/
+
+export type TasmotaPowerState = 'ON' | 'OFF';
+export type SetTasmotaPower = TasmotaPowerState | 'TOGGLE';
+
+export interface TasmotaPowerResource extends Resource {
+  set(value: SetTasmotaPower, options?: Abortable): Promise<void>;
+
+  get(options?: Abortable): Promise<TasmotaPowerState>;
+
+  readonly change$: EventEmitter<TasmotaPowerState>;
+}
+
+/*---*/
+
+export interface ZigbeeResource extends Resource {
+  send(packet: ZigbeePacket, options?: Abortable): Promise<void>;
+
+  readonly receive$: EventEmitter<ZigbeePacket>;
+}
+
+/*---*/
+
+export interface MqttResource extends Resource {
+  publish(topic: string, payload: string | Uint8Array, options?: Abortable): Promise<void>;
+
+  subscribe(topic: string, options?: Abortable): Promise<MqttSubscriptionResource>;
+}
+
+export interface MqttSubscriptionResource extends Resource {
+  readonly packet$: EventEmitter<any>;
+}
+
+/*---*/
+
+export interface ThingProperty<GValue> extends Resource {
+  set(value: GValue, options?: Abortable): Promise<void>;
+
+  get(options?: Abortable): Promise<GValue>;
+
+  readonly change$: EventEmitter<GValue>;
+}

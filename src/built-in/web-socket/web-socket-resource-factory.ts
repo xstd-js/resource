@@ -1,6 +1,6 @@
 import { type Abortable } from '@xstd/abortable';
 import { WebSocketError } from '@xstd/custom-error';
-import { ResourceFactory } from '../../resource/factory/resource-factory.js';
+import { ResourceFactory } from '../../factory/resource-factory.js';
 import { WebSocketResource } from './web-socket-resource.js';
 
 export interface OpenWebSocketResourceOptions extends Abortable {

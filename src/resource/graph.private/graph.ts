@@ -45,13 +45,9 @@ export function registerResourceRelation(from: Resource, relation: string, to: R
 
   RESOURCE_RELATIONS.add(resourceRelation);
 
-  Promise.any([
-    from.closed,
-    to.closed,
-  ])
-    .then((): void => {
-      RESOURCE_RELATIONS.delete(resourceRelation);
-    })
+  Promise.any([from.closed, to.closed]).then((): void => {
+    RESOURCE_RELATIONS.delete(resourceRelation);
+  });
 }
 
 /*---*/

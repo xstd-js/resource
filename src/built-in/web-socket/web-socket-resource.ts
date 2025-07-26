@@ -1,9 +1,10 @@
-import { sleep } from '@xstd/abortable';
+import { Abortable, sleep } from '@xstd/abortable';
 import { WebSocketError } from '@xstd/custom-error';
-import { ResourceManager } from '../../resource/helpers/resource-manager.js';
+import { ResourceManager } from '../../manager/resource-manager.js';
 import { Resource } from '../../resource/resource.js';
-import { EmitterFactory } from '../emitter/emitter-factory.js';
-import { DispatchValue, EmitterResource } from '../emitter/emitter-resource.js';
+import { EmitterFactory } from '../emitter/factory/emitter-factory.js';
+import { EmitterResource } from '../emitter/resource/emitter-resource.js';
+import { DispatchValue } from '../emitter/resource/types/dispatch-value.js';
 import { type WebSocketDownValue } from './types/web-socket-down-value.js';
 import { type WebSocketUpValue } from './types/web-socket-up-value.js';
 import {
@@ -54,6 +55,7 @@ export class WebSocketResource extends Resource {
     // close this resource when the webSocket errors
     this.#webSocket.addEventListener(
       'error',
+      /* istanbul ignore next */
       (): void => {
         void this.close(new WebSocketError());
       },
@@ -99,22 +101,21 @@ export class WebSocketResource extends Resource {
     );
   }
 
-  async send(payload: WebSocketUpValue): Promise<void> {
+  send(payload: WebSocketUpValue, options?: Abortable): Promise<void> {
     return this.#manager.runTask(async (signal: AbortSignal): Promise<void> => {
       this.#webSocket.send(payload);
 
       while (this.#webSocket.bufferedAmount > 0) {
-        if (
-          this.#webSocket.readyState === WebSocket.CLOSING ||
-          this.#webSocket.readyState === WebSocket.CLOSED
-        ) {
-          throw new Error(
-            `WebSocket ${this.#webSocket.readyState === WebSocket.CLOSING ? 'closing' : 'closed'}.`,
-          );
+        try {
+          await sleep(0, { signal });
+        } catch (error: unknown) {
+          // if the Resource closes while we sleep, we throw the error only if send is not complete
+          if (options?.signal?.aborted || this.#webSocket.bufferedAmount > 0) {
+            throw error;
+          }
         }
-        await sleep(0, { signal });
       }
-    });
+    }, options);
   }
 
   get receiver(): EmitterFactory<WebSocketDownValue> {

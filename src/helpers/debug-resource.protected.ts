@@ -1,4 +1,4 @@
-import { type Resource } from '../resource.js';
+import { type Resource } from '../resource/resource.js';
 
 export function preferDarkColorScheme(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -10,9 +10,8 @@ export function generateRandomColor(
   return `hsl(${Math.floor(Math.random() * 360).toString(10)}deg, 100%, ${light})`;
 }
 
-const COLOR_SCHEME =
-  preferDarkColorScheme() ?
-    {
+const COLOR_SCHEME = preferDarkColorScheme()
+  ? {
       open: '#35e062',
       closing: '#f6a62e',
       closed: '#ff5a5a',

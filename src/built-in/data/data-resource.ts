@@ -1,4 +1,5 @@
-import { type OnCloseResource, Resource } from '../../resource/resource.js';
+import { Resource } from '../../resource/resource.js';
+import { OnCloseResource } from '../../resource/types/on-close-resource.js';
 
 export class DataResource<GData> extends Resource {
   readonly #data: GData;

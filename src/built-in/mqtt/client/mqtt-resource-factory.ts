@@ -1,6 +1,6 @@
 import { type Abortable } from '@xstd/abortable';
 import mqtt, { type MqttClient } from 'mqtt';
-import { ResourceFactory } from '../../../resource/factory/resource-factory.js';
+import { ResourceFactory } from '../../../factory/resource-factory.js';
 import { MqttResource } from './mqtt-resource.js';
 
 export interface OpenMqttResourceOptions extends Abortable {

@@ -1,0 +1,567 @@
+// /*---*/
+//
+// export interface InitResource {
+//   (ctx: InitResourceContext): void;
+// }
+//
+// export interface InitResourceContext {
+//   readonly controller: AbortController;
+//   readonly resolve: (value: void | PromiseLike<void>) => void;
+//   readonly reject: (reason?: unknown) => void;
+//   readonly promise: Promise<void>;
+// }
+//
+// /*---*/
+//
+// export class Resource {
+//   readonly #controller: AbortController;
+//   readonly #closed: Promise<void>;
+//
+//   constructor(init: InitResource) {
+//     this.#controller = new AbortController();
+//     const { promise, resolve, reject } = Promise.withResolvers<void>();
+//     this.#closed = promise;
+//
+//     init({
+//       controller: this.#controller,
+//       promise,
+//       resolve,
+//       reject,
+//     });
+//   }
+//
+//   get closeSignal(): AbortSignal {
+//     return this.#controller.signal;
+//   }
+//
+//   get closed(): Promise<void> {
+//     return this.#closed;
+//   }
+//
+//   close(reason?: unknown): Promise<void> {
+//     if (!this.#controller.signal.aborted) {
+//       this.#controller.abort(reason);
+//     }
+//
+//     return this.#closed;
+//   }
+//
+//   [Symbol.asyncDispose](): Promise<void> {
+//     return this.close();
+//   }
+// }
+//
+// /*---*/
+//
+// export interface OpenResource<GResource extends Resource> {
+//   (options?: Abortable): PromiseLike<GResource> | GResource;
+// }
+//
+// export class ResourceFactory<GResource extends Resource> {
+//   readonly #open: OpenResource<GResource>;
+//
+//   constructor(open: OpenResource<GResource>) {
+//     this.#open = open;
+//   }
+//
+//   open(options?: Abortable): Promise<GResource> {
+//     return Promise.try(this.#open, options);
+//   }
+// }
+
+// export interface Ephemeral {
+//   readonly closed: Promise<void>;
+// }
+
+// export function ephemeral() {}
+
+/*---*/
+
+// export interface RunResourceTask {
+//   <GReturn>(task: ResourceTask<GReturn>): GReturn;
+// }
+//
+// export interface ResourceTask<GReturn> {
+//   (): GReturn;
+// }
+//
+// export interface RunAsyncResourceTask {
+//   <GReturn>(task: AsyncResourceTask<GReturn> | PromiseLike<GReturn>): Promise<GReturn>;
+// }
+//
+// export interface AsyncResourceTask<GReturn> {
+//   (signal: AbortSignal): PromiseLike<GReturn> | GReturn;
+// }
+//
+// export interface AddResourceTeardown {
+//   (teardown: ResourceTeardown): void;
+// }
+//
+// export interface ResourceTeardown {
+//   (reason: unknown): PromiseLike<any> | any;
+// }
+//
+// export interface CloseResource {
+//   (reason?: unknown): Promise<void>;
+// }
+
+/*---*/
+
+async function example01() {
+  await using file: any = await fs('/path/to/file', 'r').open();
+
+  await file.write('abc');
+}
+
+async function example02() {
+  await using ws: any = await websocket('wss://test.com').open();
+
+  await ws.send('abc');
+
+  for await (const message of ws.receiver /* non closable resource */) {
+  }
+}
+
+async function example03() {
+  await using mqtt: any = await openMqtt('mqtt://test.com');
+
+  await mqtt.publish('abc');
+
+  await using subscription: any = await mqtt.subscribe('topic'); // <= closable resource
+
+  for await (const message of subscription) {
+  }
+}
+
+async function example04() {
+  await using mqtt: any = await openMqtt('mqtt://test.com');
+
+  await mqtt.publish('abc');
+
+  await using subscription: any = await mqtt.subscribe('topic'); // <= closable resource
+
+  const packets = subscription.map((message: any) => message.payload); // <= non closable resource
+
+  for await (const message of packets) {
+  }
+}
+
+async function example05() {
+  await using mqtt: any = await openMqtt('mqtt://test.com'); // <= closable resource
+
+  await mqtt.publish('abc');
+
+  const subscriber: any = mqtt.subscriber('topic'); // <= resource factory
+
+  const packets = subscriber.map((message: any) => message.payload); // <= resource factory
+
+  await using subscription: any = await packets.open(); // <= closable resource
+
+  for await (const message of subscription) {
+  }
+}
+
+/*---*/
+
+// export interface BaseResource<GRef> {
+//   readonly ref: GRef;
+//   readonly signal: AbortSignal;
+//   readonly closed: Promise<void>;
+// }
+//
+// // export interface Resource<GRef> extends BaseResource<GRef>, AsyncDisposable {
+// //   readonly close: CloseResource;
+// //   readonly toBase: ResourceToBaseResource<GRef>;
+// // }
+//
+// export function resource<GRef>(init: InitResource<GRef>): Resource<GRef> {
+//   const controller: AbortController = new AbortController();
+//   const signal: AbortSignal = controller.signal;
+//   const { resolve: resolveClose, promise: closed }: PromiseWithResolvers<void> =
+//     Promise.withResolvers();
+//   const pendingTasks: Set<Promise<unknown>> = new Set<Promise<unknown>>();
+//   const teardowns: ResourceTeardown[] = [];
+//
+//   const throwIfClosed = (): void => {
+//     if (signal.aborted) {
+//       throw new Error('Resource closed.');
+//     }
+//   };
+//
+//   const ref: GRef = init({
+//     signal,
+//     runTask: <GReturn>(task: ResourceTask<GReturn>): GReturn => {
+//       throwIfClosed();
+//       return task();
+//     },
+//     runAsyncTask: async <GReturn>(
+//       task: AsyncResourceTask<GReturn> | PromiseLike<GReturn>,
+//     ): Promise<GReturn> => {
+//       throwIfClosed();
+//
+//       const taskPromise: Promise<GReturn> =
+//         typeof task === 'function' ? Promise.try(task, signal) : Promise.resolve(task);
+//
+//       pendingTasks.add(taskPromise);
+//
+//       try {
+//         return await taskPromise;
+//       } finally {
+//         pendingTasks.delete(taskPromise);
+//       }
+//     },
+//     addTeardown: (teardown: ResourceTeardown): void => {
+//       throwIfClosed();
+//       teardowns.push(teardown);
+//     },
+//   });
+//
+//   const close: CloseResource = async (reason?: unknown): Promise<void> => {
+//     if (!signal.aborted) {
+//       controller.abort(reason);
+//
+//       resolveClose(
+//         Promise.allSettled(pendingTasks.values()).then(async (): Promise<void> => {
+//           let isErrored: boolean = false;
+//           let error: unknown;
+//
+//           for (let i: number = teardowns.length; i >= 0; i--) {
+//             try {
+//               await teardowns[i](reason);
+//             } catch (closeError: unknown) {
+//               if (isErrored) {
+//                 error = new SuppressedError(closeError, error);
+//               } else {
+//                 isErrored = true;
+//                 error = closeError;
+//               }
+//             }
+//           }
+//
+//           if (isErrored) {
+//             throw error;
+//           }
+//         }),
+//       );
+//     }
+//
+//     await closed;
+//   };
+//
+//   return Object.freeze({
+//     ref,
+//     signal,
+//     closed,
+//     close,
+//     [Symbol.asyncDispose]: (): Promise<void> => {
+//       return close();
+//     },
+//     toBase: (): BaseResource<GRef> => {
+//       return Object.freeze({
+//         ref,
+//         signal,
+//         closed,
+//       });
+//     },
+//   });
+// }
+//
+// /*---*/
+//
+// export interface EmitterResourceInitFunction<GValue> {
+//   (dispatch: EmitterResourceDispatchFunction<GValue>): void;
+// }
+//
+// export interface EmitterResourceDispatchFunction<GValue> {
+//   (value: GValue): void;
+// }
+//
+// export interface EmitterResource<GValue> {
+//   listen(listener: EventEmitterListener<GValue>): Resource<void>;
+// }
+//
+// export function emitterResource<GValue>(
+//   init: EmitterResourceInitFunction<GValue>,
+// ): Resource<EmitterResource<GValue>> {
+//   return resource<EmitterResource<GValue>>(
+//     ({ runTask, addTeardown }: InitResourceContext): EmitterResource<GValue> => {
+//       const listeners: EventEmitterListener<GValue>[] = [];
+//
+//       const children: Set<Resource<void>> = new Set<Resource<void>>();
+//
+//       addTeardown((reason: unknown) => {
+//         // TODO function for similar cases
+//         return Promise.allSettled(
+//           children.values().map((child: Resource<void>) => child.close(reason)),
+//         );
+//       });
+//
+//       init((value: GValue): void => {
+//         for (const listener of listeners) {
+//           listener(value);
+//         }
+//       });
+//
+//       const listen = (listener: EventEmitterListener<GValue>): Resource<void> => {
+//         return runTask((): Resource<void> => {
+//           listeners.push(listener);
+//
+//           const child: Resource<void> = resource(({ addTeardown }: InitResourceContext): void => {
+//             addTeardown((): void => {
+//               children.delete(child);
+//
+//               const index: number = listeners.indexOf(listener);
+//               if (index !== -1) {
+//                 listeners.splice(index, 1);
+//               }
+//             });
+//           });
+//
+//           children.add(child);
+//
+//           return child;
+//         });
+//       };
+//
+//       return {
+//         listen,
+//         map: <GNewValue>(
+//           mapFnc: (value: GValue) => GNewValue,
+//         ): Resource<EmitterResource<GNewValue>> => {
+//           return emitterResource<GNewValue>(
+//             (dispatch: EmitterResourceDispatchFunction<GNewValue>): void => {
+//               const child = listen((value: GValue): void => {
+//                 dispatch(mapFnc(value));
+//               });
+//
+//               // child.close();
+//             },
+//           );
+//         },
+//       };
+//     },
+//   );
+// }
+//
+// /*---*/
+//
+// export interface WebSocketResource {
+//   send(payload: Uint8Array): Promise<void>;
+//
+//   readonly receive$: BaseResource<EmitterResource<Uint8Array>>;
+// }
+//
+// export function webSocketResource(websocket: WebSocket): Resource<WebSocketResource> {
+//   return resource<WebSocketResource>(({ runAsyncTask }: InitResourceContext): WebSocketResource => {
+//     return {
+//       send: (payload: Uint8Array): Promise<void> => {
+//         return runAsyncTask(async (): Promise<void> => {
+//           websocket.send(payload);
+//         });
+//       },
+//       receive$: emitterResource<Uint8Array>().toBase(),
+//     };
+//   });
+// }
+//
+// async function test() {
+//   await using ws = webSocketResource(new WebSocket('ws://localhost:8080'));
+//
+//   ws.ref.receive$.ref.listen(() => {});
+// }
+
+/*---*/
+
+// export interface EmitterResourceInitFunction<GValue> {
+//   (dispatch: EmitterResourceDispatchFunction<GValue>): CloseResource;
+// }
+//
+// export interface EmitterResourceDispatchFunction<GValue> {
+//   (value: GValue): void;
+// }
+//
+// export class EmitterResource<GValue> extends Resource {
+//   readonly #listeners: EventEmitterListener<GValue>[];
+//
+//   constructor(init: EmitterResourceInitFunction<GValue>) {
+//     super(
+//       init((value: GValue): void => {
+//         this.#dispatch(value);
+//       }),
+//     );
+//     this.#listeners = [];
+//   }
+//
+//   #dispatch(value: GValue): void {
+//     for (const listener of this.#listeners) {
+//       listener(value);
+//     }
+//   }
+//
+//   listen(listener: EventEmitterListener<GValue>): Resource {
+//     this.#listeners.push(listener);
+//
+//     return new Resource((): void => {
+//       const index: number = this.#listeners.indexOf(listener);
+//       if (index !== -1) {
+//         this.#listeners.splice(index, 1);
+//       }
+//     }).childOf(this);
+//   }
+// }
+
+// /*---*/
+//
+// export type WebSocketDownValue = ArrayBuffer | string;
+// export type WebSocketUpValue = string | ArrayBufferLike | Blob | ArrayBufferView;
+//
+// export class WebSocketResource extends Resource {
+//   static open(
+//     url: string | URL,
+//     protocols?: string | readonly string[],
+//   ): Promise<WebSocketResource> {
+//     return new Promise(
+//       (resolve: (value: WebSocketResource) => void, reject: (error: unknown) => void): void => {
+//         const webSocket: WebSocket = new WebSocket(url, protocols as string[]);
+//         webSocket.binaryType = 'arraybuffer';
+//
+//         const controller: AbortController = new AbortController();
+//
+//         webSocket.addEventListener(
+//           'open',
+//           (): void => {
+//             controller.abort();
+//             resolve(new WebSocketResource(webSocket));
+//           },
+//           controller,
+//         );
+//
+//         // "close": CloseEvent;
+//         // "error": Event;
+//         // "message": MessageEvent;
+//         // "open": Event;
+//
+//         webSocket.addEventListener(
+//           'error',
+//           (): void => {
+//             controller.abort();
+//             reject(new Error('Websocket error.'));
+//           },
+//           controller,
+//         );
+//
+//         webSocket.addEventListener(
+//           'close',
+//           (): void => {
+//             controller.abort();
+//             reject(new Error('Websocket closed.'));
+//           },
+//           controller,
+//         );
+//       },
+//     );
+//   }
+//
+//   readonly #webSocket: WebSocket;
+//   readonly #down$: EmitterResource<WebSocketDownValue>;
+//
+//   protected constructor(webSocket: WebSocket) {
+//     if (webSocket.readyState !== WebSocket.OPEN) {
+//       throw new Error('Websocket not open.');
+//     }
+//
+//     super((): void => {
+//       this.#webSocket.close();
+//     });
+//
+//     this.#webSocket = webSocket;
+//
+//     this.#webSocket.addEventListener(
+//       'error',
+//       (): void => {
+//         void this.close(new Error('Websocket error.'));
+//       },
+//       {
+//         signal: this.signal,
+//       },
+//     );
+//
+//     this.#webSocket.addEventListener(
+//       'close',
+//       (): void => {
+//         void this.close(new Error('Websocket closed.'));
+//       },
+//       {
+//         signal: this.signal,
+//       },
+//     );
+//
+//     this.#down$ = new EmitterResource<WebSocketDownValue>(
+//       (dispatch: EventEmitterDispatchFunction<WebSocketDownValue>): CloseResource => {
+//         const onMessage = (event: MessageEvent<WebSocketDownValue>): void => {
+//           dispatch(event.data);
+//         };
+//
+//         this.#webSocket.addEventListener('message', onMessage);
+//
+//         return (): void => {
+//           this.#webSocket.removeEventListener('message', onMessage);
+//         };
+//       },
+//     ).childOf(this);
+//   }
+//
+//   get down$(): EmitterResource<WebSocketDownValue> {
+//     return this.#down$;
+//   }
+//
+//   send(payload: WebSocketUpValue): Promise<void> {
+//     return this.asyncTask((signal: AbortSignal) => {
+//       this.#webSocket.send(payload);
+//       // TODO await flush
+//     });
+//   }
+// }
+//
+// /*---*/
+//
+// export type TasmotaPowerState = 'ON' | 'OFF';
+// export type SetTasmotaPower = TasmotaPowerState | 'TOGGLE';
+//
+// export interface TasmotaPowerResource extends Resource {
+//   set(value: SetTasmotaPower, options?: Abortable): Promise<void>;
+//
+//   get(options?: Abortable): Promise<TasmotaPowerState>;
+//
+//   readonly change$: EventEmitter<TasmotaPowerState>;
+// }
+//
+// /*---*/
+//
+// export interface ZigbeeResource extends Resource {
+//   send(packet: ZigbeePacket, options?: Abortable): Promise<void>;
+//
+//   readonly receive$: EventEmitter<ZigbeePacket>;
+// }
+//
+// /*---*/
+//
+// export interface MqttResource extends Resource {
+//   publish(topic: string, payload: string | Uint8Array, options?: Abortable): Promise<void>;
+//
+//   subscribe(topic: string, options?: Abortable): Promise<MqttSubscriptionResource>;
+// }
+//
+// export interface MqttSubscriptionResource extends Resource {
+//   readonly packet$: EventEmitter<any>;
+// }
+//
+// /*---*/
+//
+// export interface ThingProperty<GValue> extends Resource {
+//   set(value: GValue, options?: Abortable): Promise<void>;
+//
+//   get(options?: Abortable): Promise<GValue>;
+//
+//   readonly change$: EventEmitter<GValue>;
+// }

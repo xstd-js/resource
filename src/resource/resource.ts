@@ -1,36 +1,68 @@
-export interface OnCloseResource {
-  (reason: unknown): PromiseLike<void> | void;
-}
+import { type CloseSource } from './types/close-source.js';
+import { type OnCloseResource } from './types/on-close-resource.js';
 
-export type OptionalOnCloseResource = OnCloseResource | undefined | void;
-
-export type CloseSource = Resource | AbortSignal;
+/**
+ * Represents a resource that can be closed asynchronously.
+ *
+ * This class provides methods and properties for managing the lifecycle of the resource,
+ * including its closure and cleanup logic.
+ */
 
 export class Resource implements AsyncDisposable {
   readonly #close: OnCloseResource | undefined;
   readonly #controller: AbortController;
   readonly #closed: PromiseWithResolvers<void>;
 
+  /**
+   * Creates a new `Resource` instance.
+   *
+   * @param close - An optional function that will be called when the `Resource` is closed.
+   *                This function can be used to perform cleanup or release underlying resources.
+   */
   constructor(close?: OnCloseResource) {
     this.#close = close;
     this.#controller = new AbortController();
     this.#closed = Promise.withResolvers<void>();
   }
 
+  /**
+   * Ensures the `Resource` is open. Throws an error if the resource has already been closed.
+   *
+   * @throws {Error} If the resource is closed, throws an error with a message `Resource closed`.
+   */
   throwIfClosed(): void {
     if (this.#controller.signal.aborted) {
       throw new Error('Resource closed');
     }
   }
 
+  /**
+   * Provides an AbortSignal that is triggered when the `Resource` is closed.
+   * This signal can be used to handle cancellation logic based on the resource's lifecycle.
+   *
+   * @returns The `AbortSignal` associated with the resource.
+   */
   get closeSignal(): AbortSignal {
     return this.#controller.signal;
   }
 
+  /**
+   * Returns a Promise that resolves when the `Resource` has been fully closed.
+   * This can be used to wait for the completion of the closing operation.
+   *
+   * @returns A Promise that resolves when the resource is closed.
+   */
   get closed(): Promise<void> {
     return this.#closed.promise;
   }
 
+  /**
+   * Closes the `Resource`, optionally providing a reason for the closure.
+   * If a closure function was provided during construction, it will be invoked.
+   *
+   * @param reason - An optional argument describing why the resource is being closed.
+   * @returns A Promise that resolves when the resource is fully closed.
+   */
   close(reason?: unknown): Promise<void> {
     if (!this.#controller.signal.aborted) {
       this.#controller.abort(reason);
@@ -43,10 +75,32 @@ export class Resource implements AsyncDisposable {
     return this.#closed.promise;
   }
 
+  /**
+   * Implements the asynchronous disposal protocol.
+   * Automatically closes the `Resource` when it goes out of scope or is used with `await using`.
+   *
+   * @example
+   * ```ts
+   * async function main() {
+   *   await using resource = openFile('/path');
+   *   const content = await resource.read();
+   *   // The resource will be automatically disposed at the end of the block.
+   * }
+   * ```
+   * @returns A Promise that resolves when the resource is closed.
+   */
   [Symbol.asyncDispose](): Promise<void> {
     return this.close();
   }
 
+  /**
+   * Configures the `Resource` to close in response to one or more `CloseSource` instances.
+   * `CloseSource` can be another `Resource` or an `AbortSignal`.
+   *
+   * @param closeSources - A list of sources that will trigger the resource's closure.
+   *                       These can include `Resource` instances or `AbortSignal` objects.
+   * @returns The current `Resource` instance for method chaining.
+   */
   closesWith(...closeSources: (CloseSource | undefined)[]): this {
     for (const closeSource of closeSources) {
       if (closeSource instanceof AbortSignal) {

@@ -26,6 +26,7 @@
   "devDependencies": {
     "@types/node": "^24.1.0",
     "@vitest/coverage-istanbul": "^3.2.4",
+    "msw": "^2.10.4",
     "prettier": "^3.6.2",
     "prettier-plugin-organize-imports": "^4.2.0",
     "typedoc": "^0.28.7",
@@ -38,6 +39,10 @@
     "type": "lib"
   },
   "dependencies": {
-    "@xstd/abortable": "^1.2.1"
+    "@xstd/abortable": "^1.2.1",
+    "@xstd/custom-error": "^0.2.0",
+    "@xstd/equal-function": "^0.0.1",
+    "@xstd/functional": "^0.2.2",
+    "mqtt": "^5.13.3"
   }
 }

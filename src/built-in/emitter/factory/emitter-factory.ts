@@ -1,37 +1,41 @@
-import { FilterFunction } from '@lirx/utils';
 import { type Abortable, abortify } from '@xstd/abortable';
-import { EQUAL_FUNCTION_STRICT_EQUAL, EqualFunction } from '@xstd/equal-function';
-import { FilterFunctionWithSubType, MapFilterFunction, type MapFunction } from '@xstd/functional';
-import { ResourceFactory } from '../../resource/factory/resource-factory.js';
-import { runSequentiallyVoidPromiseFactories } from '../../resource/helpers/run-sequentially-void-promise-factories.js';
-import { DispatchValue, EmitterResource, ValueListener } from './emitter-resource.js';
-
-/** TYPES **/
-
-// DISTINCT
-
-export interface EmitterFactoryDistinctOptions<GValue> {
-  readonly initialValue?: GValue;
-  readonly equal?: EqualFunction<GValue>;
-}
+import { EQUAL_FUNCTION_STRICT_EQUAL } from '@xstd/equal-function';
+import {
+  type FilterFunction,
+  type FilterFunctionWithSubType,
+  type MapFilterFunction,
+  type MapFunction,
+} from '@xstd/functional';
+import { ResourceFactory } from '../../../factory/resource-factory.js';
+import { runSequentiallyVoidPromiseFactories } from '../../../helpers/run-sequentially-void-promise-factories.js';
+import { EmitterResource } from '../resource/emitter-resource.js';
+import { type DispatchValue } from '../resource/types/dispatch-value.js';
+import { type ValueListener } from '../resource/types/value-listener.js';
+import { type EmitterFactoryDistinctOptions } from './ytpes/methods/distinct/emitter-factory-distinct-options.js';
+import { type EmitterFactoryToAsyncIteratorOptions } from './ytpes/methods/to-async-iterator/emitter-factory-to-async-iterator-options.js';
 
 const NONE = Symbol('NONE');
 
-// TO ASYNC ITERATOR
-
-export interface EmitterFactoryToAsyncIteratorOptions extends Abortable {
-  readonly bufferSize?: number;
-  readonly windowTime?: number;
-}
-
-/** CLASS **/
-
+/**
+ * EmitterFactory is a factory class for managing the creation and lifecycle of `EmitterResource` instances.
+ * It provides utility operations such as mapping, filtering, transformation, and resource sharing.
+ *
+ * @template GValue - The type of values emitted by the factory's emitters.
+ */
 export class EmitterFactory<GValue> extends ResourceFactory<
   [options?: Abortable],
   EmitterResource<GValue>
 > {
   /* CHAIN */
 
+  /**
+   * Maps the opened EmitterResource to a new one using the provided mapping function.
+   *
+   * @experimental
+   * @template GNewValue - The type of values for the new EmitterResource.
+   * @param mapFnc - A function that maps the current EmitterResource to the new one.
+   * @returns A new EmitterFactory that produces the mapped EmitterResource.
+   */
   mapResource<GNewValue>(
     mapFnc: MapFunction<EmitterResource<GValue>, EmitterResource<GNewValue>>,
   ): EmitterFactory<GNewValue> {
@@ -44,6 +48,13 @@ export class EmitterFactory<GValue> extends ResourceFactory<
 
   /* CHAIN */
 
+  /**
+   * Transforms the emitted values using a custom dispatch function.
+   *
+   * @template GNewValue - Type of the transformed values.
+   * @param onValue - Function invoked when a new value is emitted, using a custom dispatch.
+   * @returns A new EmitterFactory producing resources of transformed values.
+   */
   transform<GNewValue>(
     onValue: (value: GValue, dispatch: DispatchValue<GNewValue>) => void,
   ): EmitterFactory<GNewValue> {
@@ -65,12 +76,26 @@ export class EmitterFactory<GValue> extends ResourceFactory<
     );
   }
 
+  /**
+   * Maps emitted values to new values via a synchronous mapping function.
+   *
+   * @template GNewValue - The new type of transformed values.
+   * @param mapFnc - Function to map the emitted value to a new value.
+   * @returns An `EmitterFactory` that emits transformed values.
+   */
   map<GNewValue>(mapFnc: MapFunction<GValue, GNewValue>): EmitterFactory<GNewValue> {
     return this.transform((value: GValue, dispatch: DispatchValue<GNewValue>): void => {
       dispatch(mapFnc(value));
     });
   }
 
+  /**
+   * Filters emitted values based on a provided condition.
+   *
+   * @template GNewValue - The new type of values that pass the filter.
+   * @param filterFnc - Function to filter emitted values.
+   * @returns An `EmitterFactory` that emits only the filtered values.
+   */
   filter<GNewValue extends GValue>(
     filterFnc: FilterFunctionWithSubType<GValue, GNewValue>,
   ): EmitterFactory<GNewValue>;
@@ -83,6 +108,14 @@ export class EmitterFactory<GValue> extends ResourceFactory<
     });
   }
 
+  /**
+   * Combines filtering and mapping into one step. Only non-null results from the mapper
+   * are emitted by the returned factory.
+   *
+   * @template GNewValue - The type of mapped and filtered values.
+   * @param mapFilterFnc - Function that combines mapping and filtering.
+   * @returns An `EmitterFactory` emitting filtered and mapped values.
+   */
   mapFilter<GNewValue>(
     mapFilterFnc: MapFilterFunction<GValue, GNewValue>,
   ): EmitterFactory<GNewValue> {
@@ -94,6 +127,13 @@ export class EmitterFactory<GValue> extends ResourceFactory<
     });
   }
 
+  /**
+   * Ensures that only distinct emitted values are propagated.
+   *
+   * @param options - Configuration options that include an initial value
+   * and a custom equality function.
+   * @returns An `EmitterFactory` emitting distinct values based on equality.
+   */
   distinct({
     initialValue = NONE as GValue,
     equal = EQUAL_FUNCTION_STRICT_EQUAL,
@@ -106,6 +146,11 @@ export class EmitterFactory<GValue> extends ResourceFactory<
     });
   }
 
+  /**
+   * Shares the resource instance, preserving value emissions across multiple consumers.
+   *
+   * @returns A shared `EmitterFactory` instance.
+   */
   share(): EmitterFactory<GValue> {
     let usageCount: number = 0;
 
@@ -209,6 +254,12 @@ export class EmitterFactory<GValue> extends ResourceFactory<
 
   /* PROMISE-BASED */
 
+  /**
+   * Returns a Promise resolved with the first emitted value of this factory.
+   *
+   * @param options - An optional AbortSignal to abort this task.
+   * @returns A promise resolving with the first emitted value.
+   */
   async first({ signal }: Abortable = {}): Promise<GValue> {
     await using emitter: EmitterResource<GValue> = await this.open({ signal });
 
@@ -231,6 +282,12 @@ export class EmitterFactory<GValue> extends ResourceFactory<
     );
   }
 
+  /**
+   * Opens the `EmitterResource and converts the emitted values into an asynchronous generator.
+   *
+   * @param options - Iterator options like buffer size, window time, and an AbortSignal.
+   * @returns An async generator of emitted values.
+   */
   async *toAsyncGenerator({
     bufferSize = Number.POSITIVE_INFINITY,
     windowTime = Number.POSITIVE_INFINITY,
@@ -308,6 +365,11 @@ export class EmitterFactory<GValue> extends ResourceFactory<
     }
   }
 
+  /**
+   * Enables `for-await-of` iteration for the factory's emitted values.
+   *
+   * @returns An async generator of emitted values.
+   */
   [Symbol.asyncIterator](): AsyncGenerator<GValue, void, void> {
     return this.toAsyncGenerator();
   }

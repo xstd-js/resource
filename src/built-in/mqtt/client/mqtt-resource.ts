@@ -1,13 +1,18 @@
-import { Abortable, abortify } from '@xstd/abortable';
+import { type Abortable, abortify } from '@xstd/abortable';
 import { CompleteError } from '@xstd/custom-error';
-import { IDisconnectPacket, IPublishPacket, ISubscriptionGrant, MqttClient } from 'mqtt';
-import { ResourceManager } from '../../../resource/helpers/resource-manager.js';
+import {
+  type IDisconnectPacket,
+  type IPublishPacket,
+  type ISubscriptionGrant,
+  type MqttClient,
+} from 'mqtt';
+import { ResourceManager } from '../../../manager/resource-manager.js';
 import { Resource } from '../../../resource/resource.js';
-import { EmitterFactory } from '../../emitter/emitter-factory.js';
-import { EmitterResource } from '../../emitter/emitter-resource.js';
+import { EmitterFactory } from '../../emitter/factory/emitter-factory.js';
+import { EmitterResource } from '../../emitter/resource/emitter-resource.js';
 import { MqttTopic } from '../topic/mqtt-topic.js';
-import { MqttResourceFactory, OpenMqttResourceOptions } from './mqtt-resource-factory.js';
-import { MqttPublishPacket } from './types/mqtt-publish-packet.js';
+import { MqttResourceFactory, type OpenMqttResourceOptions } from './mqtt-resource-factory.js';
+import { type MqttPublishPacket } from './types/mqtt-publish-packet.js';
 
 /** TYPES **/
 

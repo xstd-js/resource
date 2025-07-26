@@ -1,0 +1,192 @@
+import { Abortable } from '@lirx/utils';
+import { EventDispatcher, EventEmitter } from '@xstd/event-emitter';
+import type { EventEmitterListener } from '@xstd/event-emitter/event-emitter/types/event-emitter-listener';
+import type { UndoFunction } from '@xstd/undo-function';
+
+/*---*/
+
+export interface CloseResource {
+  (reason: unknown): PromiseLike<void> | void;
+}
+
+export interface ResourceTask<GReturn> {
+  (): GReturn;
+}
+
+export interface ResourceAsyncTask<GReturn> {
+  (): PromiseLike<GReturn> | GReturn;
+}
+
+export class Resource implements AsyncDisposable {
+  readonly #close: CloseResource;
+  #closed: boolean;
+  #closeReason: unknown;
+  readonly #untilClosed: PromiseWithResolvers<void>;
+  readonly #pendingTasks: Set<ResourceAsyncTask<any>>;
+
+  constructor(close: CloseResource) {
+    this.#close = close;
+    this.#pendingTasks = new Set<ResourceAsyncTask<any>>();
+    this.#closed = false;
+    this.#untilClosed = Promise.withResolvers<void>();
+  }
+
+  /* RUN TASKS */
+
+  task<GReturn>(task: ResourceTask<GReturn>): GReturn {
+    this.#throwIfClosed();
+    return task();
+  }
+
+  async asyncTask<GReturn>(task: ResourceAsyncTask<GReturn>): Promise<GReturn> {
+    this.#throwIfClosed();
+
+    if (this.#pendingTasks.has(task)) {
+      throw new Error('Task already running.');
+    }
+
+    this.#pendingTasks.add(task);
+
+    try {
+      return await task();
+    } finally {
+      this.#pendingTasks.delete(task);
+    }
+  }
+
+  /* DERIVE */
+
+  childOf(resource: Resource): this {
+    // TODO continue here
+    resource.untilClosed().then((): void => {
+      this.close();
+    });
+    return this;
+  }
+
+  /* CLOSE */
+
+  get closed(): boolean {
+    return this.#closed;
+  }
+
+  get closeReason(): unknown {
+    return this.#closeReason;
+  }
+
+  #throwIfClosed(): void {
+    if (this.closed) {
+      throw new Error('Resource closed.', {
+        cause: this.#closeReason,
+      });
+    }
+  }
+
+  throwIfClosed(): void {
+    if (this.closed) {
+      throw this.#closeReason;
+    }
+  }
+
+  untilClosed({ signal }: Abortable = {}): Promise<unknown> {
+    return new Promise<unknown>(
+      (resolve: (reason: unknown) => void, reject: (error: unknown) => void) => {
+        signal?.throwIfAborted();
+
+        const end = (): void => {
+          signal?.removeEventListener('abort', onAbort);
+        };
+
+        const onAbort = (): void => {
+          end();
+          reject(signal!.reason);
+        };
+
+        signal?.addEventListener('abort', onAbort);
+
+        this.#untilClosed.promise.then(
+          (): void => {
+            end();
+            resolve(this.#closeReason);
+          },
+          (error: unknown): void => {
+            end();
+            reject(error);
+          },
+        );
+      },
+    );
+  }
+
+  close(reason?: unknown): Promise<void> {
+    if (!this.#closed) {
+      this.#closeReason = reason;
+      this.#untilClosed.resolve(
+        Promise.allSettled(this.#pendingTasks).then((): PromiseLike<void> | void => {
+          return this.#close(reason);
+        }),
+      );
+    }
+
+    return this.#untilClosed.promise;
+  }
+
+  [Symbol.asyncDispose](): Promise<void> {
+    return this.close();
+  }
+}
+
+/*---*/
+
+export class EmitterResource<GValue> extends Resource {
+  readonly #listeners: Set<EventEmitterListener<GValue>>;
+
+  constructor(close: CloseResource) {
+    super(close);
+  }
+
+  listen(listener: EventEmitterListener<GValue>): UndoFunction {}
+}
+
+/*---*/
+
+export type TasmotaPowerState = 'ON' | 'OFF';
+export type SetTasmotaPower = TasmotaPowerState | 'TOGGLE';
+
+export interface TasmotaPowerResource extends Resource {
+  set(value: SetTasmotaPower, options?: Abortable): Promise<void>;
+
+  get(options?: Abortable): Promise<TasmotaPowerState>;
+
+  readonly change$: EventEmitter<TasmotaPowerState>;
+}
+
+/*---*/
+
+export interface ZigbeeResource extends Resource {
+  send(packet: ZigbeePacket, options?: Abortable): Promise<void>;
+
+  readonly receive$: EventEmitter<ZigbeePacket>;
+}
+
+/*---*/
+
+export interface MqttResource extends Resource {
+  publish(topic: string, payload: string | Uint8Array, options?: Abortable): Promise<void>;
+
+  subscribe(topic: string, options?: Abortable): Promise<MqttSubscriptionResource>;
+}
+
+export interface MqttSubscriptionResource extends Resource {
+  readonly packet$: EventEmitter<any>;
+}
+
+/*---*/
+
+export interface ThingProperty<GValue> extends Resource {
+  set(value: GValue, options?: Abortable): Promise<void>;
+
+  get(options?: Abortable): Promise<GValue>;
+
+  readonly change$: EventEmitter<GValue>;
+}
