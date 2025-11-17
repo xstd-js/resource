@@ -1,4 +1,5 @@
 {
+  "name": "Documentation",
   "entryPoints": ["src/**/*.ts"],
   "readme": "README.md",
   "exclude": [

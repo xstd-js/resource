@@ -1,6 +1,6 @@
 {
   "name": "@xstd/resource",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "type": "module",
   "main": "./index.js",
   "scripts": {
@@ -24,25 +24,28 @@
     "url": "git+https://github.com/xstd-js/resource.git"
   },
   "devDependencies": {
-    "@types/node": "^24.1.0",
-    "@vitest/coverage-istanbul": "^3.2.4",
-    "msw": "^2.10.4",
+    "@types/add": "^2",
+    "@types/node": "^24.10.0",
+    "@vitest/coverage-istanbul": "^4.0.8",
+    "msw": "^2.12.1",
     "prettier": "^3.6.2",
-    "prettier-plugin-organize-imports": "^4.2.0",
-    "typedoc": "^0.28.7",
-    "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "prettier-plugin-organize-imports": "^4.3.0",
+    "typedoc": "^0.28.14",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.8"
   },
-  "packageManager": "yarn@4.9.2",
+  "packageManager": "yarn@4.10.3",
   "fabrique": {
-    "version": "1.0.0",
+    "version": "1.0.14",
     "type": "lib"
   },
   "dependencies": {
-    "@xstd/abortable": "^1.2.1",
+    "@xstd/abortable": "^1.2.2",
     "@xstd/custom-error": "^0.2.0",
     "@xstd/equal-function": "^0.0.1",
-    "@xstd/functional": "^0.2.2",
-    "mqtt": "^5.13.3"
+    "@xstd/functional": "^0.3.3",
+    "@xstd/mqtt-topic": "^1.0.0",
+    "@xstd/noop": "^1.0.0",
+    "mqtt": "^5.14.1"
   }
 }

@@ -64,11 +64,8 @@ describe('Resource', () => {
         await resource.closed;
       });
 
-      it('should close from an aborted AbortSignal', async () => {
-        const controller = new AbortController();
-        controller.abort('test');
-
-        const resource = new Resource().closesWith(controller.signal);
+      it('should close immediately from an aborted AbortSignal', async () => {
+        const resource = new Resource().closesWith(AbortSignal.abort('test'));
 
         expect(resource.closeSignal.aborted).toBe(true);
         expect(resource.closeSignal.reason).toBe('test');
@@ -90,10 +87,53 @@ describe('Resource', () => {
         await resource.closed;
       });
 
-      it('should support undefined', async () => {
-        const resource = new Resource().closesWith(undefined);
+      it('should skip closing if second arguments is already aborted', () => {
+        const controller = new AbortController();
+        const resource = new Resource().closesWith(controller.signal, {
+          signal: AbortSignal.abort('test'),
+        });
 
         expect(resource.closeSignal.aborted).toBe(false);
+
+        controller.abort('test');
+
+        expect(resource.closeSignal.aborted).toBe(false);
+      });
+
+      describe('using array of CloseSource', () => {
+        it('should close from an AbortSignal', async () => {
+          const controller = new AbortController();
+          const resource = new Resource().closesWith([controller.signal]);
+
+          expect(resource.closeSignal.aborted).toBe(false);
+
+          controller.abort('test');
+
+          expect(resource.closeSignal.aborted).toBe(true);
+          expect(resource.closeSignal.reason).toBe('test');
+
+          await resource.closed;
+        });
+
+        it('should close from another Resource', async () => {
+          const main = new Resource();
+          const resource = new Resource().closesWith([main]);
+
+          expect(resource.closeSignal.aborted).toBe(false);
+
+          main.close('test');
+
+          expect(resource.closeSignal.aborted).toBe(true);
+          expect(resource.closeSignal.reason).toBe('test');
+
+          await resource.closed;
+        });
+
+        it('should support undefined entries', async () => {
+          const resource = new Resource().closesWith([undefined]);
+
+          expect(resource.closeSignal.aborted).toBe(false);
+        });
       });
     });
   });

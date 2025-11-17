@@ -1,5 +1,6 @@
-import { type CloseSource } from './types/close-source.js';
+import { type Abortable, mergeAbortSignals } from '@xstd/abortable';
 import { type OnCloseResource } from './types/on-close-resource.js';
+import { type ResourceCloseWithInput } from './types/resource-close-with-input.js';
 
 /**
  * Represents a resource that can be closed asynchronously.
@@ -7,7 +8,6 @@ import { type OnCloseResource } from './types/on-close-resource.js';
  * This class provides methods and properties for managing the lifecycle of the resource,
  * including its closure and cleanup logic.
  */
-
 export class Resource implements AsyncDisposable {
   readonly #close: OnCloseResource | undefined;
   readonly #controller: AbortController;
@@ -94,33 +94,58 @@ export class Resource implements AsyncDisposable {
   }
 
   /**
+   * Configures the `Resource` to close in response to `closeSource` abort.
+   *
+   * @param {AbortSignal} closeSource - The primary signal used to trigger the resource close.
+   * @param {AbortSignal | undefined} [abortSignal] - An optional `AbortSignal` to undo the bind.
+   */
+  #closesWith(closeSource: AbortSignal, abortSignal: AbortSignal | undefined): void {
+    // console.assert(!abortSignal?.aborted)
+
+    if (closeSource.aborted) {
+      void this.close(closeSource.reason);
+    } else {
+      closeSource.addEventListener(
+        'abort',
+        (): void => {
+          void this.close(closeSource.reason);
+        },
+        {
+          signal: mergeAbortSignals([this.closeSignal, abortSignal]),
+        },
+      );
+    }
+  }
+
+  /**
    * Configures the `Resource` to close in response to one or more `CloseSource` instances.
    * `CloseSource` can be another `Resource` or an `AbortSignal`.
    *
    * @param closeSources - A list of sources that will trigger the resource's closure.
    *                       These can include `Resource` instances or `AbortSignal` objects.
+   * @param {Abortable} [options] - Optional abortable signal for cleanup.
    * @returns The current `Resource` instance for method chaining.
    */
-  closesWith(...closeSources: (CloseSource | undefined)[]): this {
-    for (const closeSource of closeSources) {
-      if (closeSource instanceof AbortSignal) {
-        if (closeSource.aborted) {
-          void this.close(closeSource.reason);
-        } else {
-          closeSource.addEventListener(
-            'abort',
-            (): void => {
-              void this.close(closeSource.reason);
-            },
-            {
-              signal: this.closeSignal,
-            },
-          );
+  closesWith(closeSources: ResourceCloseWithInput, { signal }: Abortable = {}): this {
+    if (!signal?.aborted) {
+      if (Array.isArray(closeSources)) {
+        for (const closeSource of closeSources) {
+          if (closeSource instanceof AbortSignal) {
+            this.#closesWith(closeSource, signal);
+          } else if (closeSource instanceof Resource) {
+            this.#closesWith(closeSource.closeSignal, signal);
+          }
         }
-      } else if (closeSource instanceof Resource) {
-        this.closesWith(closeSource.closeSignal);
+      } else {
+        this.#closesWith(
+          closeSources instanceof AbortSignal
+            ? closeSources
+            : (closeSources as Resource).closeSignal,
+          signal,
+        );
       }
     }
+
     return this;
   }
 }

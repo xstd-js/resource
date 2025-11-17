@@ -1,34 +1,90 @@
-import { Abortable, sleep } from '@xstd/abortable';
+import { type Abortable, mergeAbortSignals, sleep } from '@xstd/abortable';
 import { WebSocketError } from '@xstd/custom-error';
-import { ResourceManager } from '../../manager/resource-manager.js';
+import { ResourceFactory } from '../../factory/resource-factory.js';
+import { CloseStack } from '../../manager/close-stack.js';
 import { Resource } from '../../resource/resource.js';
-import { EmitterFactory } from '../emitter/factory/emitter-factory.js';
-import { EmitterResource } from '../emitter/resource/emitter-resource.js';
-import { DispatchValue } from '../emitter/resource/types/dispatch-value.js';
+import { type WebSocketResourceListener } from './types/methods/listen/web-socket-resource-listener.js';
+import { type WebSocketResourceOpenOptions } from './types/static-methods/open/web-socket-resource-open-options.js';
+import { type WebSocketResourceFactory } from './types/static-properties/factory/web-socket-resource-factory.js';
 import { type WebSocketDownValue } from './types/web-socket-down-value.js';
 import { type WebSocketUpValue } from './types/web-socket-up-value.js';
-import {
-  type OpenWebSocketResourceOptions,
-  WebSocketResourceFactory,
-} from './web-socket-resource-factory.js';
 
 export class WebSocketResource extends Resource {
-  static #factory: WebSocketResourceFactory;
+  static readonly #factory: WebSocketResourceFactory = new ResourceFactory<
+    [url: string | URL],
+    WebSocketResource,
+    WebSocketResourceOpenOptions
+  >(
+    (
+      url: string | URL,
+      { protocols, signal }: WebSocketResourceOpenOptions = {},
+    ): Promise<WebSocketResource> => {
+      return new Promise(
+        (_resolve: (value: WebSocketResource) => void, _reject: (error: unknown) => void): void => {
+          signal?.throwIfAborted();
+
+          const end = (): void => {
+            signal?.removeEventListener('abort', onAbort);
+            webSocket.removeEventListener('open', onOpen);
+            webSocket.removeEventListener('close', onClose);
+            webSocket.removeEventListener('error', onError);
+          };
+
+          const resolve = (value: WebSocketResource): void => {
+            end();
+            _resolve(value);
+          };
+
+          const reject = (error: unknown): void => {
+            end();
+            _reject(error);
+          };
+
+          const onAbort = (): void => {
+            end();
+            reject(signal!.reason);
+          };
+
+          const onOpen = (): void => {
+            end();
+            resolve(new WebSocketResource(webSocket));
+          };
+
+          const onClose = (event: CloseEvent): void => {
+            end();
+            reject(WebSocketError.fromCloseEvent(event));
+          };
+
+          const onError = (): void => {
+            end();
+            reject(new WebSocketError());
+          };
+
+          const webSocket: WebSocket = new WebSocket(url, protocols as string[]);
+          webSocket.binaryType = 'arraybuffer';
+
+          signal?.addEventListener('abort', onAbort);
+          webSocket.addEventListener('open', onOpen);
+          webSocket.addEventListener('close', onClose);
+          webSocket.addEventListener('error', onError);
+        },
+      );
+    },
+  );
+
+  static get factory(): WebSocketResourceFactory {
+    return this.#factory;
+  }
 
   static open(
     url: string | URL,
-    options?: OpenWebSocketResourceOptions,
+    options?: WebSocketResourceOpenOptions,
   ): Promise<WebSocketResource> {
-    if (this.#factory === undefined) {
-      this.#factory = new WebSocketResourceFactory();
-    }
-
     return this.#factory.open(url, options);
   }
 
   readonly #webSocket: WebSocket;
-  readonly #manager: ResourceManager;
-  readonly #receiver: EmitterFactory<WebSocketDownValue>;
+  readonly #manager: CloseStack;
 
   constructor(webSocket: WebSocket) {
     super((reason: unknown): Promise<void> => {
@@ -64,7 +120,7 @@ export class WebSocketResource extends Resource {
       },
     );
 
-    this.#manager = new ResourceManager(this);
+    this.#manager = new CloseStack(this);
 
     this.#manager.addTeardown((reason: unknown): void => {
       if (
@@ -79,26 +135,6 @@ export class WebSocketResource extends Resource {
         }
       }
     });
-
-    this.#receiver = new EmitterFactory<WebSocketDownValue>(
-      (): EmitterResource<WebSocketDownValue> => {
-        const controller: AbortController = new AbortController();
-        return new EmitterResource<WebSocketDownValue>(
-          (dispatch: DispatchValue<WebSocketDownValue>): void => {
-            this.#webSocket.addEventListener(
-              'message',
-              (event: MessageEvent<WebSocketDownValue>): void => {
-                dispatch(event.data);
-              },
-              controller,
-            );
-          },
-          (reason: unknown): void => {
-            controller.abort(reason);
-          },
-        ).closesWith(this);
-      },
-    );
   }
 
   send(payload: WebSocketUpValue, options?: Abortable): Promise<void> {
@@ -118,7 +154,21 @@ export class WebSocketResource extends Resource {
     }, options);
   }
 
-  get receiver(): EmitterFactory<WebSocketDownValue> {
-    return this.#receiver;
+  listen(listener: WebSocketResourceListener, { signal }: Abortable = {}): void {
+    if (signal?.aborted) {
+      return;
+    }
+
+    this.throwIfClosed();
+
+    this.#webSocket.addEventListener(
+      'message',
+      (event: MessageEvent<WebSocketDownValue>): void => {
+        listener(event.data);
+      },
+      {
+        signal: mergeAbortSignals([this.closeSignal, signal]),
+      },
+    );
   }
 }

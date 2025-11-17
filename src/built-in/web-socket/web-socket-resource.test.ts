@@ -1,8 +1,13 @@
 import { WebSocketData } from '@mswjs/interceptors/WebSocket';
 import { WebSocketError } from '@xstd/custom-error';
-import { WebSocketHandler, WebSocketHandlerConnection, WebSocketLink, ws } from 'msw';
-import { setupServer, SetupServerApi } from 'msw/node';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import {
+  type WebSocketHandler,
+  type WebSocketHandlerConnection,
+  type WebSocketLink,
+  ws,
+} from 'msw';
+import { setupServer, type SetupServerApi } from 'msw/node';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocketResource } from './web-socket-resource.js';
 
 describe('WebSocketResource', () => {
@@ -28,12 +33,14 @@ describe('WebSocketResource', () => {
   it('should open, send, and receive', async () => {
     await using wsr = await WebSocketResource.open('wss://chat.example.com');
 
-    await Promise.all([
-      Promise.try(async () => {
-        expect(await wsr.receiver.first()).toBe('server->test');
-      }),
-      wsr.send('test'),
-    ]);
+    const spy = vi.fn();
+
+    wsr.listen(spy);
+
+    await wsr.send('test');
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenNthCalledWith(1, 'server->test');
   });
 
   describe('constructor', () => {

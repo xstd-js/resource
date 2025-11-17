@@ -7,8 +7,9 @@ export default defineConfig({
       provider: 'istanbul',
       include: ['src/**/*.ts'],
       exclude: [
-        'src/**/*.{test,bench,protected,private}.ts',
-        'src/**/*.{protected,private}/**/*.ts',
+        'src/**/*.{test,bench}.ts',
+        'src/**/*.skip-test*.ts',
+        'src/**/*.skip-test*/**/*.ts',
       ],
       thresholds: {
         100: true,

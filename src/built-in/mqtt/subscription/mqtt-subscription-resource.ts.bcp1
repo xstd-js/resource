@@ -1,0 +1,189 @@
+import { type Abortable, abortify, mergeAbortSignals } from '@xstd/abortable';
+import { MqttTopic } from '@xstd/mqtt-topic';
+import { type IPublishPacket, type MqttClient } from 'mqtt';
+import { Resource } from '../../resource/resource.js';
+import { subscribeToMqttClientSubscription } from './functions.private/subscribe-to-mqtt-client-subscription.js';
+
+/*--------------*/
+
+/*--------------*/
+
+/* OPEN */
+
+export interface MqttSubscriptionResourceOpenOptions extends Abortable {
+  readonly qos?: 0 | 1 | 2;
+  readonly noLocal?: boolean;
+  readonly retainAsPublished?: boolean;
+  readonly retainHandling?: 0 | 1 | 2;
+}
+
+/* CLASS */
+
+export class MqttSubscriptionResource extends Resource {
+  static #activeSubscriptions = new WeakMap<
+    MqttClient,
+    Map<string /* topic */, ActiveSubscription>
+  >();
+
+  static async open(
+    client: MqttClient,
+    topic: string,
+    {
+      qos = 0,
+      noLocal = false,
+      retainAsPublished = false,
+      retainHandling = 0,
+      signal,
+    }: MqttSubscriptionResourceOpenOptions = {},
+  ): Promise<MqttSubscriptionResource> {
+    signal?.throwIfAborted();
+
+    let activeSubscriptions: Map<string, ActiveSubscription> | undefined =
+      this.#activeSubscriptions.get(client);
+
+    if (activeSubscriptions === undefined) {
+      activeSubscriptions = new Map<string, ActiveSubscription>();
+      this.#activeSubscriptions.set(client, activeSubscriptions);
+    }
+
+    let activeSubscription: ActiveSubscription | undefined = activeSubscriptions.get(topic);
+
+    if (activeSubscription !== undefined && activeSubscription.closePromise !== undefined) {
+      await abortify(activeSubscription.closePromise, { signal });
+      activeSubscription = undefined;
+    }
+
+    if (activeSubscription === undefined) {
+      const controller: AbortController = new AbortController();
+
+      activeSubscription = {
+        qos,
+        noLocal,
+        retainAsPublished,
+        retainHandling,
+        consumers: 1,
+        openController: controller,
+        openPromise: subscribeToMqttClientSubscription(client, topic, {
+          qos,
+          noLocal,
+          retainAsPublished,
+          retainHandling,
+          signal: controller.signal,
+        }),
+        closePromise: undefined,
+      };
+
+      activeSubscriptions.set(topic, activeSubscription);
+    } else if (
+      activeSubscription.qos !== qos ||
+      activeSubscription.noLocal !== noLocal ||
+      activeSubscription.retainAsPublished !== retainAsPublished ||
+      activeSubscription.retainHandling !== retainHandling
+    ) {
+      throw new Error(`Subscription to "${topic}" already locked.`);
+    } else {
+      activeSubscription.consumers++;
+    }
+
+    try {
+      await abortify(activeSubscription!.openPromise, { signal });
+    } catch (error: unknown) {
+      await this.#close(client, topic);
+      throw error;
+    }
+
+    return new MqttSubscriptionResource(client, topic);
+  }
+
+  static async #close(client: MqttClient, topic: string): Promise<void> {
+    const activeSubscriptions: Map<string, ActiveSubscription> =
+      this.#activeSubscriptions.get(client)!;
+
+    const activeSubscription: ActiveSubscription = activeSubscriptions.get(topic)!;
+
+    activeSubscription.consumers--;
+
+    if (activeSubscription.consumers === 0) {
+      activeSubscription.openController.abort();
+
+      const { promise, resolve } = Promise.withResolvers<void>();
+      activeSubscription.closePromise = promise;
+
+      try {
+        await activeSubscription.openPromise;
+        await client.unsubscribeAsync(topic);
+      } finally {
+        activeSubscriptions.delete(topic);
+        if (activeSubscriptions.size === 0) {
+          this.#activeSubscriptions.delete(client);
+        }
+        resolve();
+      }
+    }
+  }
+
+  readonly #client: MqttClient;
+  readonly #topic: MqttTopic;
+
+  protected constructor(client: MqttClient, topic: string) {
+    super((): Promise<void> => {
+      return MqttSubscriptionResource.#close(client, topic);
+    });
+
+    this.#client = client;
+    this.#topic = new MqttTopic(topic);
+  }
+
+  listen(listener: MqttSubscriptionResourceListener, { signal }: Abortable = {}): void {
+    if (signal?.aborted) {
+      throw signal.reason;
+    }
+
+    this.throwIfClosed();
+
+    const onClientMessage = (topic: string, payload: Buffer, _packet: IPublishPacket): void => {
+      if (this.#topic.matches(topic)) {
+        listener({
+          topic,
+          payload,
+        });
+      }
+    };
+
+    this.#client.on('message', onClientMessage);
+
+    mergeAbortSignals([this.closeSignal, signal]).addEventListener(
+      'abort',
+      (): void => {
+        this.#client.off('message', onClientMessage);
+      },
+      { once: true },
+    );
+  }
+}
+
+/* INTERNAL TYPES */
+
+interface ActiveSubscription {
+  readonly qos: 0 | 1 | 2;
+  readonly noLocal: boolean;
+  readonly retainAsPublished: boolean;
+  readonly retainHandling: 0 | 1 | 2;
+
+  consumers: number;
+
+  readonly openController: AbortController;
+  readonly openPromise: Promise<void>;
+  closePromise: Promise<void> | undefined;
+}
+
+/* TYPES */
+
+export interface MqttSubscriptionResourceListener {
+  (packet: MqttPublishPacket): void;
+}
+
+export interface MqttPublishPacket {
+  readonly topic: string;
+  readonly payload: Uint8Array;
+}
