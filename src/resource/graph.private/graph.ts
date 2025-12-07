@@ -1,3 +1,4 @@
+import { type Abortable, untilEvent } from '@xstd/abortable';
 import { type Resource } from '../resource.js';
 
 const RESOURCES = new Set<Resource>();
@@ -28,7 +29,16 @@ interface ResourceRelation {
 
 const RESOURCE_RELATIONS = new Set<ResourceRelation>();
 
-export function registerResourceRelation(from: Resource, relation: string, to: Resource): void {
+export function registerResourceRelation(
+  from: Resource,
+  relation: string,
+  to: Resource,
+  { signal }: Abortable = {},
+): void {
+  if (signal?.aborted) {
+    return;
+  }
+
   if (!RESOURCES.has(from)) {
     throw new Error('"from" resource not registered');
   }
@@ -45,7 +55,11 @@ export function registerResourceRelation(from: Resource, relation: string, to: R
 
   RESOURCE_RELATIONS.add(resourceRelation);
 
-  Promise.any([from.closed, to.closed]).then((): void => {
+  Promise.any([
+    from.closed,
+    to.closed,
+    ...(signal === undefined ? [] : [untilEvent(signal, 'abort')]),
+  ]).then((): void => {
     RESOURCE_RELATIONS.delete(resourceRelation);
   });
 }

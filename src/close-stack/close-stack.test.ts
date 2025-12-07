@@ -7,6 +7,16 @@ describe('CloseStack', () => {
   let resource: Resource;
   let closeStack: CloseStack;
 
+  (globalThis as any).SuppressedError ??= class SuppressedError extends Error {
+    constructor(
+      public error: any,
+      public suppressed: any,
+      message?: string,
+    ) {
+      super(message);
+    }
+  };
+
   beforeEach((): void => {
     resource = new Resource((reason: unknown) => closeStack.close(reason));
     closeStack = new CloseStack(resource);
@@ -16,6 +26,101 @@ describe('CloseStack', () => {
     it('supports AbortSignal as input', () => {
       closeStack = new CloseStack(AbortSignal.abort('test'));
       expect(() => closeStack.throwIfClosed()).toThrow();
+    });
+  });
+
+  describe('static-methods', () => {
+    describe('sequentially', () => {
+      it('should await all promises', async () => {
+        const called: string[] = [];
+
+        const spyA = async () => {
+          await sleep(10);
+          called.push('a');
+        };
+
+        const spyB = async () => {
+          expect(called).toEqual(['a']);
+          called.push('b');
+        };
+
+        await expect(CloseStack.sequentially([spyA, spyB])).resolves.toBeUndefined();
+
+        expect(called).toEqual(['a', 'b']);
+      });
+
+      it('should reject with SuppressedError', async () => {
+        const spyA = async () => {
+          throw 'a';
+        };
+
+        const spyB = async () => {
+          throw 'b';
+        };
+
+        let rejected = false;
+        try {
+          await CloseStack.sequentially([spyA, spyB]);
+        } catch (error: unknown) {
+          rejected = true;
+          expect(error).instanceOf(SuppressedError);
+          expect((error as SuppressedError).error).toBe('b');
+          expect((error as SuppressedError).suppressed).toBe('a');
+        }
+
+        expect(rejected).toBe(true);
+      });
+    });
+
+    describe('concurrently', () => {
+      it('should await all promises', async () => {
+        const called: string[] = [];
+
+        const spyA = async () => {
+          await sleep(10);
+          called.push('a');
+        };
+
+        const spyB = async () => {
+          called.push('b');
+          expect(called).toEqual(['b']);
+        };
+
+        await expect(CloseStack.concurrently([spyA, spyB])).resolves.toBeUndefined();
+
+        expect(called).toEqual(['b', 'a']);
+      });
+
+      it('should reject with single Error', async () => {
+        const spyA = async () => {
+          throw 'a';
+        };
+
+        const spyB = async () => {};
+
+        await expect(CloseStack.concurrently([spyA, spyB])).rejects.toThrow('a');
+      });
+
+      it('should reject with AggregateError', async () => {
+        const spyA = async () => {
+          throw 'a';
+        };
+
+        const spyB = async () => {
+          throw 'b';
+        };
+
+        let rejected = false;
+        try {
+          await CloseStack.concurrently([spyA, spyB]);
+        } catch (error: unknown) {
+          rejected = true;
+          expect(error).instanceOf(AggregateError);
+          expect((error as AggregateError).errors).toEqual(['a', 'b']);
+        }
+
+        expect(rejected).toBe(true);
+      });
     });
   });
 
@@ -153,7 +258,7 @@ describe('CloseStack', () => {
           await sleep(10);
         });
 
-        closeStack.adopt(child);
+        closeStack.adoptResource(child);
 
         expect(child.closeSignal.aborted).toBe(false);
 
@@ -165,7 +270,7 @@ describe('CloseStack', () => {
       it('should be skipped if the signal is immediately aborted', async () => {
         const child = new Resource();
 
-        closeStack.adopt(child, { signal: AbortSignal.abort('test') });
+        closeStack.adoptResource(child, { signal: AbortSignal.abort('test') });
 
         expect(child.closeSignal.aborted).toBe(false);
 
@@ -176,7 +281,20 @@ describe('CloseStack', () => {
 
       it('should throw if closed', async () => {
         resource.close('test');
-        expect(() => closeStack.adopt(new Resource())).toThrow();
+        expect(() => closeStack.adoptResource(new Resource())).toThrow();
+      });
+    });
+
+    describe('addEventListener', () => {
+      it('should emit event', async () => {
+        const spy = vi.fn();
+        const target = new EventTarget();
+        closeStack.addEventListener(target, 'click', spy);
+        const event = new Event('click');
+        target.dispatchEvent(event);
+
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy).toHaveBeenNthCalledWith(1, event);
       });
     });
 
