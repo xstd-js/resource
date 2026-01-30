@@ -1,19 +1,20 @@
 import { sleep } from '@xstd/abortable';
 import { beforeEach, describe, expect, it, test, vi } from 'vitest';
-import { Resource } from '../resource/resource.js';
-import { CloseStack } from './close-stack.js';
+import { Resource } from '../resource/resource.ts';
+import { CloseStack } from './close-stack.ts';
 
 describe('CloseStack', () => {
   let resource: Resource;
   let closeStack: CloseStack;
 
   (globalThis as any).SuppressedError ??= class SuppressedError extends Error {
-    constructor(
-      public error: any,
-      public suppressed: any,
-      message?: string,
-    ) {
+    error: any;
+    suppressed: any;
+
+    constructor(error: any, suppressed: any, message?: string) {
       super(message);
+      this.error = error;
+      this.suppressed = suppressed;
     }
   };
 

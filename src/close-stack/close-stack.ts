@@ -1,10 +1,10 @@
 import { type Abortable, mergeAbortSignals } from '@xstd/abortable';
-import { type Resource } from '../resource/resource.js';
-import { type CloseSource } from '../resource/types/close-source.js';
-import { type CloseStackPromiseFactory } from './types/close-stack-promise-factory.js';
-import { type AddTeardownOptions } from './types/methods/add-teardown/add-teardown-options.js';
-import { type TeardownFunction } from './types/methods/add-teardown/teardown-function.js';
-import { type AsyncTask } from './types/methods/run-task/async-task.js';
+import { type Resource } from '../resource/resource.ts';
+import { type CloseSource } from '../resource/types/close-source.ts';
+import { type CloseStackPromiseFactory } from './types/close-stack-promise-factory.ts';
+import { type AddTeardownOptions } from './types/methods/add-teardown/add-teardown-options.ts';
+import { type TeardownFunction } from './types/methods/add-teardown/teardown-function.ts';
+import { type AsyncTask } from './types/methods/run-task/async-task.ts';
 
 /**
  * Manages async operations in the context of a `CloseSource`.
@@ -122,7 +122,7 @@ export class CloseStack {
    *
    * @template GReturn - The return type of the task.
    * @param {AsyncTask<GReturn> | PromiseLike<GReturn>} task - The asynchronous task or a promise to execute.
-   * @param signal - Optional abortable signal for cancellation.
+   * @param {Abortable} options - Optional abortable signal for cancellation.
    * @returns {Promise<GReturn>} A promise resolving with the task's result.
    * @throws {Error} If the CloseStack is closing or closed, the provided `signal` aborted, or if the task rejects.
    */
@@ -159,8 +159,9 @@ export class CloseStack {
    * - `concurrent` teardowns are executed concurrently.
    *
    * @param {TeardownFunction} teardown - The teardown function to execute.
-   * @param mode - The execution mode (`sequential` or `concurrent`).
-   * @param signal - Optional abortable signal to remove the teardown.
+   * @param {AddTeardownOptions} [options] - The execution mode (`sequential` or `concurrent`).
+   * @param options.mode - The execution mode (`sequential` or `concurrent`).
+   * @param options.signal - Optional abortable signal to remove the teardown.
    */
   addTeardown(
     teardown: TeardownFunction,
@@ -194,7 +195,7 @@ export class CloseStack {
    *
    * @template GResource - The type of the resource.
    * @param {GResource} resource - The resource to adopt.
-   * @param signal - Optional abortable signal to remove the adoption.
+   * @param {Abortable} [options] - Optional abortable signal to remove the adoption.
    * @returns {GResource} The adopted resource for chaining.
    */
   adoptResource<GResource extends Resource>(

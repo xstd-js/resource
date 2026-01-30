@@ -1,5 +1,7 @@
+/* istanbul ignore file -- @preserve */
+
 import { type Abortable, untilEvent } from '@xstd/abortable';
-import { type Resource } from '../resource.js';
+import { type Resource } from '../resource.ts';
 
 const RESOURCES = new Set<Resource>();
 

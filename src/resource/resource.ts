@@ -1,7 +1,7 @@
 import { type Abortable, mergeAbortSignals } from '@xstd/abortable';
-import { type CloseSource } from './types/close-source.js';
-import { type OnCloseResource } from './types/on-close-resource.js';
-import { type ResourceCloseWithInput } from './types/resource-close-with-input.js';
+import { type CloseSource } from './types/close-source.ts';
+import { type OnCloseResource } from './types/on-close-resource.ts';
+import { type ResourceCloseWithInput } from './types/resource-close-with-input.ts';
 
 /**
  * A `Resource` is an abstract entity representing something **live** that needs to be cleaned up when it's no longer necessary.

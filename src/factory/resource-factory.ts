@@ -1,8 +1,11 @@
 import { type Abortable } from '@xstd/abortable';
-import { type Resource } from '../resource/resource.js';
-import { type OpenResourceArguments } from './types/open-resource-arguments.js';
-import { type OpenResource } from './types/open-resource.js';
+import { type Resource } from '../resource/resource.ts';
+import { type OpenResourceArguments } from './types/open-resource-arguments.ts';
+import { type OpenResource } from './types/open-resource.ts';
 
+/**
+ * @experimental
+ */
 export class ResourceFactory<
   GArguments extends readonly unknown[],
   GResource extends Resource,

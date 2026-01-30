@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Resource } from '../resource/resource.js';
-import { ResourceFactory } from './resource-factory.js';
+import { Resource } from '../resource/resource.ts';
+import { ResourceFactory } from './resource-factory.ts';
 
 describe('ResourceFactory', () => {
   it('should have expected open behaviour', async () => {

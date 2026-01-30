@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Resource } from './resource.js';
+import { Resource } from './resource.ts';
 
 describe('Resource', () => {
-  it('should have expected close behaviour', async () => {
+  it('should have the expected "close" behaviour', async () => {
     const closeHookSpy = vi.fn();
     const resource = new Resource(closeHookSpy);
 
@@ -87,7 +87,7 @@ describe('Resource', () => {
         await resource.closed;
       });
 
-      it('should skip closing if second arguments is already aborted', () => {
+      it('should skip closing if the second arguments is already aborted', () => {
         const controller = new AbortController();
         const resource = new Resource().closesWith(controller.signal, {
           signal: AbortSignal.abort('test'),
@@ -96,6 +96,25 @@ describe('Resource', () => {
         expect(resource.closeSignal.aborted).toBe(false);
 
         controller.abort('test');
+
+        expect(resource.closeSignal.aborted).toBe(false);
+      });
+
+      it('should cancel "closesWith" if the second arguments is aborted later', () => {
+        const closeController = new AbortController();
+        const cancelController = new AbortController();
+
+        const resource = new Resource().closesWith(closeController.signal, {
+          signal: cancelController.signal,
+        });
+
+        expect(resource.closeSignal.aborted).toBe(false);
+
+        cancelController.abort('test');
+
+        expect(resource.closeSignal.aborted).toBe(false);
+
+        closeController.abort('test');
 
         expect(resource.closeSignal.aborted).toBe(false);
       });
@@ -133,6 +152,17 @@ describe('Resource', () => {
           const resource = new Resource().closesWith([undefined]);
 
           expect(resource.closeSignal.aborted).toBe(false);
+        });
+
+        it('should skip duplicate close sources', () => {
+          const controller = new AbortController();
+          const resource = new Resource().closesWith([controller.signal, controller.signal]);
+
+          expect(resource.closeSignal.aborted).toBe(false);
+
+          controller.abort('test');
+
+          expect(resource.closeSignal.aborted).toBe(true);
         });
       });
     });
