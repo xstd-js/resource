@@ -154,7 +154,7 @@ describe('Resource', () => {
           expect(resource.closeSignal.aborted).toBe(false);
         });
 
-        it('should skip duplicate close sources', () => {
+        it('should support duplicate close sources', () => {
           const controller = new AbortController();
           const resource = new Resource().closesWith([controller.signal, controller.signal]);
 

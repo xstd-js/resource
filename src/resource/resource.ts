@@ -14,7 +14,6 @@ export class Resource implements AsyncDisposable {
   readonly #close: OnCloseResource | undefined;
   readonly #controller: AbortController;
   readonly #closed: PromiseWithResolvers<void>;
-  readonly #closesWithSet: WeakSet<AbortSignal>;
 
   /**
    * Creates a new `Resource` instance.
@@ -26,7 +25,6 @@ export class Resource implements AsyncDisposable {
     this.#close = close;
     this.#controller = new AbortController();
     this.#closed = Promise.withResolvers<void>();
-    this.#closesWithSet = new WeakSet<AbortSignal>();
   }
 
   /**
@@ -108,15 +106,6 @@ export class Resource implements AsyncDisposable {
       closeSource = closeSource.closeSignal;
     }
 
-    // avoid duplicate if it cannot be aborted
-    if (abortSignal === undefined) {
-      if (this.#closesWithSet.has(closeSource)) {
-        return;
-      }
-
-      this.#closesWithSet.add(closeSource);
-    }
-
     if (closeSource.aborted) {
       void this.close(closeSource.reason);
     } else {
@@ -142,7 +131,7 @@ export class Resource implements AsyncDisposable {
    * @returns {this} The current `Resource` instance for method chaining.
    */
   closesWith(closeSources: ResourceCloseWithInput, { signal }: Abortable = {}): this {
-    if (!signal?.aborted) {
+    if (!this.#controller.signal.aborted && !signal?.aborted) {
       if (Array.isArray(closeSources)) {
         for (const closeSource of closeSources) {
           if (closeSource !== undefined) {

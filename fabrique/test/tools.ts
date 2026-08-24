@@ -1,5 +1,5 @@
-export namespace testTools {
-  export function sleep(duration: number, signal?: AbortSignal): Promise<void> {
+export class TestTools {
+  static sleep(duration: number, signal?: AbortSignal): Promise<void> {
     return new Promise<void>((resolve: () => void, reject: (reason?: unknown) => void): void => {
       signal?.throwIfAborted();
 
@@ -22,7 +22,7 @@ export namespace testTools {
     });
   }
 
-  export function polyfillRequestIdleCallback(): void {
+  static polyfillRequestIdleCallback(): void {
     globalThis.requestIdleCallback ??= (
       callback: IdleRequestCallback,
       { timeout = 0 }: IdleRequestOptions = {},
@@ -35,7 +35,7 @@ export namespace testTools {
     };
   }
 
-  export function gc(): void {
+  static gc(): void {
     if (typeof (globalThis as any).gc === 'function') {
       return (globalThis as any).gc!();
     } else {

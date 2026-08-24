@@ -191,7 +191,10 @@ export class CloseStack {
   // }
 
   /**
-   * Adopts a `Resource` to associate its lifecycle with this CloseStack.
+   * Adopts a `Resource` to associate its lifecycle with this CloseStack:
+   *
+   * - closes `resource` when this CloseStack closes
+   *
    *
    * @template GResource - The type of the resource.
    * @param {GResource} resource - The resource to adopt.
