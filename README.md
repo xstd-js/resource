@@ -3,6 +3,7 @@
 ![NPM](https://img.shields.io/npm/l/@xstd/resource.svg)
 ![npm type definitions](https://img.shields.io/npm/types/@xstd/resource.svg)
 ![coverage](https://img.shields.io/badge/coverage-100%25-green)
+![AI generation](https://img.shields.io/badge/AI_generation-low-yellow)
 
 <picture>
   <source height="64" media="(prefers-color-scheme: dark)" srcset="https://github.com/xstd-js/website/blob/main/assets/logo/png/logo-large-dark.png?raw=true">
@@ -12,7 +13,7 @@
 
 ## @xstd/resource
 
-Objects with lifetime.
+**Objects with lifetime.**
 
 ## 📦 Installation
 
@@ -22,188 +23,270 @@ yarn add @xstd/resource
 npm install @xstd/resource --save
 ```
 
-## 📜 Documentation
+## 💡 Overview
 
-https://xstd-js.github.io/resource
+This package provides two building blocks to model _things that live_:
 
-### Resource
+- **`Resource`** — represents something **live** (a file handle, a database connection, a subscription, …) that must be cleaned up when it's no longer needed, to avoid resource leaks.
+- **`CloseStack`** — groups tasks, teardowns and adopted resources into a single, ordered cleanup sequence, driven by a `CloseSource` (a `Resource` or an `AbortSignal`).
+
+Both share the same mental model:
+
+- an **`AbortSignal`** (`closeSignal`) is aborted as soon as the closing **starts**,
+- a **promise** (`closed`) settles once the cleanup has **fully completed**,
+- a **reason** (any value) flows through the whole chain, from `close('...')` to every cleanup hook.
+
+## 🚀 `Resource`
+
+### Creating a `Resource`
+
+Pass an optional _closure function_: it will be invoked (once) when the resource closes.
 
 ```ts
-/**
- * A `Resource` is an abstract entity representing something **live** that needs to be cleaned up when it's no longer necessary.
- *
- * As an example, a _file handle_ or a _database connection_ are illustrations of live resources that must be closed when no longer required to avoid resource leaks.
- *
- * This class provides a common interface for managing these resources.
- */
-declare class Resource implements AsyncDisposable {
-  /**
-   * Creates a new `Resource` instance.
-   *
-   * @param close - An optional function that will be called when the `Resource` is closed.
-   *                This function can be used to perform cleanup or release underlying resources.
-   */
-  constructor(close?: OnCloseResource);
-  
-  /**
-   * Ensures the `Resource` is open. Throws an error if the resource is closing or closed.
-   *
-   * @throws {Error} If the resource is closing or closed.
-   */
-  throwIfClosed(): void;
-  
-  /**
-   * Returns an AbortSignal that is _aborted_ when the `Resource` is closing or closed.
-   * This signal can be used to handle cancellation logic based on the resource's lifecycle.
-   *
-   * @returns {AbortSignal} The `AbortSignal` associated with the resource.
-   */
-  get closeSignal(): AbortSignal;
-  
-  /**
-   * Returns a Promise that resolves when the `Resource` has been fully closed.
-   * This can be used to wait for the completion of the closing operation.
-   *
-   * @returns {Promise<void>} A Promise that resolves when the resource is closed.
-   */
-  get closed(): Promise<void>;
-  
-  /**
-   * Closes the `Resource`, optionally providing a reason for the closure.
-   * If a _closure function_ was provided during construction, it will be invoked.
-   *
-   * @param {unknown} [reason] - An optional argument describing why the resource is being closed.
-   * @returns {Promise<void>} A Promise that resolves when the resource is fully closed.
-   */
-  close(reason?: unknown): Promise<void>;
-  
-  /**
-   * Implements the asynchronous disposal protocol.
-   * Automatically closes the `Resource` when it goes out of scope or is used with `await using`.
-   *
-   * @returns {Promise<void>} A Promise that resolves when the resource is closed.
-   */
-  [Symbol.asyncDispose](): Promise<void>;
-  /**
-   * Configures the `Resource` to close in response to one or more `CloseSource` instances.
-   * `CloseSource` can be another `Resource` or an `AbortSignal`.
-   *
-   * @param {ResourceCloseWithInput} closeSources - A list of sources that will trigger the resource's closure.
-   *                                                These can include `Resource` instances or `AbortSignal` objects.
-   * @param {Abortable} [options] - An optional `AbortSignal` to undo the bind.
-   * @returns {this} The current `Resource` instance for method chaining.
-   */
-  closesWith(closeSources: ResourceCloseWithInput, { signal }?: Abortable): this;
+import { Resource } from '@xstd/resource';
+
+const connection: Resource = new Resource(async (): Promise<void> => {
+  await client.end(); // release the underlying resource
+});
+```
+
+### The two phases of closure
+
+A `Resource` exposes both a signal and a promise, matching the two phases of its death:
+
+| Phase | Observer | Typical use |
+| --- | --- | --- |
+| closing **starts** | `resource.closeSignal` (`AbortSignal`) | cancel in-flight work, stop listening |
+| cleanup **completed** | `resource.closed` (`Promise<void>`) | wait until it's safe to move on |
+
+```ts
+// the signal plugs anywhere an AbortSignal is expected:
+const response: Response = await fetch('https://example.com', {
+  signal: connection.closeSignal, // aborted when `connection` closes
+});
+
+// the promise resolves once the closure function has completed:
+await connection.closed;
+```
+
+### Automatic disposal with `await using`
+
+`Resource` implements [`Symbol.asyncDispose`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol/asyncDispose): it works natively with `await using` (TypeScript 5.2+, Node 20+).
+
+```ts
+import { open } from 'node:fs/promises';
+import { Resource } from '@xstd/resource';
+
+async function readConfig(path: string): Promise<string> {
+  const handle = await open(path);
+
+  await using file: Resource = new Resource((): Promise<void> => handle.close());
+
+  return handle.readFile('utf8');
+  // `file` is closed automatically when leaving the scope
 }
 ```
 
-### Resource
+### Closing with a reason
+
+`close` accepts any value as _reason_. It propagates to the signal and to the closure function, so everyone involved knows **why** things are stopping.
 
 ```ts
-/**
- * Manages async operations in the context of a `CloseSource`.
- */
-declare class CloseStack {
-  
-  /**
-   * Executes an iterable of asynchronous or synchronous functions **sequentially**, passing the provided arguments to each function.
-   * If any of the functions throw an error, subsequent functions will still be executed, and,
-   * at the end, these errors are aggregated into a chain of `SuppressedError` where the last one is thrown.
-   *
-   * @param {Iterable<CloseStackPromiseFactory<GArguments>} promiseFactories - An iterable containing functions that return a promise or any value.
-   *                                                                           These functions will be executed sequentially.
-   * @param {...GArguments} args - Arguments to be passed to each function in the iterable.
-   * @return {Promise<void>} A promise that resolves when all functions have been executed, or rejects if any errors occur during execution.
-   */
-  static sequentially<GArguments extends unknown[]>(promiseFactories: Iterable<CloseStackPromiseFactory<GArguments>>, ...args: GArguments): Promise<void>;
-  
-  /**
-   * Executes an iterable of asynchronous or synchronous functions **concurrently**, passing the provided arguments to each function.
-   * If any of the functions throw an error, other functions will still be executed, and,
-   * at the end, these errors are aggregated and thrown into a single `AggregateError` (note: if only one error is thrown, it will be thrown directly, without being wrapped in an `AggregateError`).
-   *
-   * @param {Iterable<CloseStackPromiseFactory<GArguments>} promiseFactories - An iterable containing functions that return a promise or any value.
-   *                                                                           These functions will be executed concurrently.
-   * @param {...GArguments} args - Arguments to be passed to each function in the iterable.
-   * @return {Promise<void>} A promise that resolves when all functions have been executed, or rejects if any errors occur during execution.
-   */
-  static concurrently<GArguments extends unknown[]>(promiseFactories: Iterable<CloseStackPromiseFactory<GArguments>>, ...args: GArguments): Promise<void>;
-  
-  /**
-   * Creates a new instance of `CloseStack`.
-   *
-   * @param {CloseSource} closeSource - The source providing the close signal, either an `AbortSignal` or a `Resource`.
-   */
-  constructor(closeSource: CloseSource);
-  
-  /**
-   * Throws an error if the CloseStack is closing or closed.
-   *
-   * @throws {Error} If closing or closed.
-   */
-  throwIfClosed(): void;
-  
-  /**
-   * Runs a task linked to this CloseStack's lifecycle:
-   *
-   * - this "task" function is immediately called, and receives a signal aborted when: the task completes, this CloseStack closes, or the provided `signal` from `Abortable` aborts.
-   * - the task is added to a list of pending tasks: when this `CloseStack` closes, the returned promise will await the completion (fulfilled or rejected) of all tasks before resolving.
-   *
-   * @template GReturn - The return type of the task.
-   * @param {AsyncTask<GReturn> | PromiseLike<GReturn>} task - The asynchronous task or a promise to execute.
-   * @param signal - Optional abortable signal for cancellation.
-   * @returns {Promise<GReturn>} A promise resolving with the task's result.
-   * @throws {Error} If the CloseStack is closing or closed, the provided `signal` aborted, or if the task rejects.
-   */
-  runTask<GReturn>(task: AsyncTask<GReturn> | PromiseLike<GReturn>, { signal }?: Abortable): Promise<GReturn>;
-  
-  /**
-   * Adds a teardown function to be executed when this CloseStack closes.
-   *
-   * When closing, with mode:
-   * - `sequential` teardowns are executed sequentially, in reverse order of addition.
-   * - `concurrent` teardowns are executed concurrently.
-   *
-   * @param {TeardownFunction} teardown - The teardown function to execute.
-   * @param mode - The execution mode (`sequential` or `concurrent`).
-   * @param signal - Optional abortable signal to remove the teardown.
-   */
-  addTeardown(teardown: TeardownFunction, { mode, signal }?: AddTeardownOptions): void;
-  
-  /**
-   * Adopts a `Resource` to associate its lifecycle with this CloseStack.
-   *
-   * @template GResource - The type of the resource.
-   * @param {GResource} resource - The resource to adopt.
-   * @param signal - Optional abortable signal to remove the adoption.
-   * @returns {GResource} The adopted resource for chaining.
-   */
-  adoptResource<GResource extends Resource>(resource: GResource, { signal }?: Abortable): GResource;
-  
-  /**
-   * Registers an event listener on a specified `EventTarget`, until this CloseStack closes.
-   *
-   * @template GEvent The type of the event object.
-   * @param {EventTarget} target - The target to attach the event listener to.
-   * @param {string} type A string representing the event type to listen for (e.g., 'click', 'keydown').
-   * @param {(event: GEvent) => void} listener A callback function that will be invoked when the event occurs.
-   * @param {AddEventListenerOptions} [options] An optional parameter containing configuration options for the event listener, such as `capture`, `once`, and `passive`.
-   *                                            It also supports an additional `signal` option for aborting the listener.
-   * @return {void} This method does not return any value.
-   */
-  addEventListener<GEvent>(target: EventTarget, type: string, listener: (event: GEvent) => void, options?: AddEventListenerOptions): void;
-  
-  /**
-   * Closes this CloseStack, and ensures all tasks and teardown functions are executed in proper cleanup order:
-   *
-   * 1) awaits that all pending tasks are complete
-   * 2) awaits concurrently all `concurrent` teardowns
-   * 3) awaits sequentially in reverse order all `sequential` teardowns
-   *
-   * @param {unknown} reason - The reason for closing the Resource.
-   * @returns {Promise<void>} A promise that resolves once all teardowns and tasks are handled.
-   * @throws {Error} If called outside the context of the Resource's `close` function, or if it is already closed.
-   */
-  close(reason: unknown): Promise<void>;
+const resource: Resource = new Resource((reason: unknown): void => {
+  console.log('closing because:', reason);
+});
+
+await resource.close('job done');
+
+resource.closeSignal.reason; // 'job done'
+```
+
+`close` is idempotent: calling it again returns the same promise.
+
+### Linking lifetimes with `closesWith`
+
+Resources can be chained: a resource closes when its _close sources_ close.
+
+```ts
+// close when another `Resource` closes:
+const child: Resource = new Resource().closesWith(parent);
+
+// close when an `AbortSignal` aborts:
+const task: Resource = new Resource().closesWith(controller.signal);
+
+// several sources at once (`undefined` entries are allowed):
+const session: Resource = new Resource().closesWith([parent, controller.signal, maybeSignal]);
+
+// with an undo signal — aborting it un-binds the link:
+const temp: Resource = new Resource().closesWith(parent, { signal: undo.signal });
+```
+
+The close reason of the source is forwarded to the resource.
+
+### Error handling
+
+If the closure function throws or rejects, the `closed` promise rejects:
+
+```ts
+const resource: Resource = new Resource((): Promise<void> => {
+  throw new Error('cannot flush');
+});
+
+try {
+  await resource.close();
+} catch (error: unknown) {
+  // 'cannot flush' — the same rejection is observable via `resource.closed`
 }
+```
+
+`throwIfClosed` throws as soon as the resource is closing or closed, with the close reason attached as `cause`:
+
+```ts
+resource.throwIfClosed(); // Error('Resource closed', { cause: 'job done' })
+```
+
+## 🧹 `CloseStack`
+
+A `CloseStack` manages async operations (tasks, teardowns, adopted resources) in the context of a `CloseSource`.
+
+It **never aborts its `closeSource` by itself**: its lifetime is externally managed by its source — it is not usable with `await using`. The source's closure **must** trigger `close`, exactly once — typically from the source's closure hook:
+
+```ts
+import { CloseStack, Resource } from '@xstd/resource';
+
+let closeStack: CloseStack;
+const resource: Resource = new Resource((reason: unknown): Promise<void> => closeStack.close(reason));
+closeStack = new CloseStack(resource);
+
+// closing `resource` now runs the whole cleanup sequence:
+await resource.close('bye');
+```
+
+When `close` is called, the sequence is:
+
+1. **await** all pending tasks (`runTask`),
+2. run all `concurrent` teardowns concurrently — including adopted resources — and **await** them,
+3. run all `sequential` teardowns, **in reverse order of addition**, and await them.
+
+### Running tasks: `runTask`
+
+Tasks are started immediately and receive a signal aborted when the task completes, when the `CloseStack` closes, or when the optional `signal` aborts.
+
+```ts
+const users: User[] = await closeStack.runTask(async (signal: AbortSignal): Promise<User[]> => {
+  return fetchUsers({ signal });
+});
+```
+
+When the `CloseStack` closes, pending tasks are awaited (fulfilled or rejected) **before** any teardown runs — closing never yanks the rug under in-flight work.
+
+### Adding teardowns: `addTeardown`
+
+Teardowns run when the `CloseStack` closes:
+
+- `sequential` (default): executed in reverse order of addition — like unwinding a stack,
+- `concurrent`: executed all at once.
+
+```ts
+closeStack.addTeardown((): void => {
+  handle.close(); // sequential (default)
+});
+
+closeStack.addTeardown((): Promise<void> => logger.flush(), { mode: 'concurrent' });
+```
+
+An optional `signal` removes a teardown before it runs (undo the registration).
+
+### Adopting resources: `adoptResource`
+
+Adoption ties a child `Resource` to the stack's lifetime:
+
+- the child's closure is **initiated** as soon as the stack's `closeSource` aborts (i.e. when the stack starts closing),
+- its **full closure** is awaited during the concurrent teardown phase, before the sequential teardowns,
+- if the child closes by itself, the adoption is undone automatically,
+- an optional `signal` removes the adoption.
+
+```ts
+closeStack.adoptResource(childConnection);
+```
+
+### Listening until close: `addEventListener`
+
+Attaches an event listener to any `EventTarget`, automatically removed when the `CloseStack` closes. Throws if the stack is closed.
+
+```ts
+closeStack.addEventListener(emitter, 'message', (event: MessageEvent): void => {
+  console.log(event.data);
+});
+```
+
+### Errors during close
+
+If teardowns fail, `close` rejects — sequentially with a `SuppressedError` chain (the last error thrown wins), concurrently with an `AggregateError` (a single error is rethrown as-is). The stack remains closed either way.
+
+## 📚 API
+
+### `Resource`
+
+| Member | Description |
+| --- | --- |
+| `new Resource(close?)` | Creates a resource. `close` is called once, on closure. |
+| `closeSignal: AbortSignal` | Aborted when the resource is closing or closed. |
+| `closed: Promise<void>` | Resolves when fully closed; rejects if the closure function fails. |
+| `throwIfClosed(): void` | Throws (with the close reason as `cause`) if closing or closed. |
+| `close(reason?): Promise<void>` | Initiates closure (idempotent); resolves when fully closed. |
+| `[Symbol.asyncDispose](): Promise<void>` | For `await using`; calls `close()`. |
+| `closesWith(sources, options?): this` | Closes when `Resource`/`AbortSignal` source(s) close; `options.signal` un-binds. |
+
+### `CloseStack`
+
+| Member | Description |
+| --- | --- |
+| `new CloseStack(closeSource)` | Tracks a `Resource` or `AbortSignal` as lifecycle source. |
+| `static sequentially(factories, ...args)` | Runs functions one after another; errors chained via `SuppressedError`. |
+| `static concurrently(factories, ...args)` | Runs functions at once; errors aggregated into an `AggregateError`. |
+| `throwIfClosed(): void` | Throws (with the close reason as `cause`) if closing or closed. |
+| `runTask(task, options?)` | Runs a signal-aware task; awaited before teardowns at close. |
+| `addTeardown(teardown, options?)` | Registers cleanup; `mode: 'sequential' \| 'concurrent'`, `signal` un-registers. |
+| `adoptResource(resource, options?)` | Ties a `Resource`'s lifetime to the stack; `signal` un-adopts. |
+| `addEventListener(target, type, listener, options?)` | Listens until the stack closes; throws if closed. |
+| `close(reason): Promise<void>` | Runs the cleanup sequence. **Exactly once**, from the source's closure hook. |
+
+### Types
+
+```ts
+type CloseSource = Resource | AbortSignal;
+
+interface OnCloseResource {
+  (reason: unknown): PromiseLike<void> | void;
+}
+
+type ResourceCloseWithInput = CloseSource | readonly (CloseSource | undefined)[];
+
+interface TeardownFunction {
+  (reason: unknown): PromiseLike<any> | any;
+}
+
+interface AsyncTask<GReturn> {
+  (signal: AbortSignal): PromiseLike<GReturn> | GReturn;
+}
+```
+
+## 🏭 `ResourceFactory`
+
+> [!WARNING]
+> Experimental.
+
+Factories `Resource` instances from arguments:
+
+```ts
+import { ResourceFactory } from '@xstd/resource';
+
+const connectionFactory = new ResourceFactory(async (url: string): Promise<Resource> => {
+  const client = await connect(url);
+
+  return new Resource((): Promise<void> => client.end());
+});
+
+const connection: Resource = await connectionFactory.open('postgres://localhost');
 ```

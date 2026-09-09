@@ -34,7 +34,7 @@ export class Resource implements AsyncDisposable {
    */
   throwIfClosed(): void {
     if (this.#controller.signal.aborted) {
-      throw new Error('Resource closed');
+      throw new Error('Resource closed', { cause: this.#controller.signal.reason });
     }
   }
 
@@ -52,6 +52,8 @@ export class Resource implements AsyncDisposable {
    * Returns a Promise that resolves when the `Resource` has been fully closed.
    * This can be used to wait for the completion of the closing operation.
    *
+   * Rejects if the _closure function_ throws or rejects.
+   *
    * @returns {Promise<void>} A Promise that resolves when the resource is closed.
    */
   get closed(): Promise<void> {
@@ -61,6 +63,10 @@ export class Resource implements AsyncDisposable {
   /**
    * Closes the `Resource`, optionally providing a reason for the closure.
    * If a _closure function_ was provided during construction, it will be invoked.
+   *
+   * If the _closure function_ throws or rejects, the returned Promise (and `closed`) rejects.
+   * Since both share the same Promise instance, observing either one marks the rejection as handled;
+   * an unobserved close error is reported as an unhandled rejection.
    *
    * @param {unknown} [reason] - An optional argument describing why the resource is being closed.
    * @returns {Promise<void>} A Promise that resolves when the resource is fully closed.
@@ -124,6 +130,9 @@ export class Resource implements AsyncDisposable {
   /**
    * Configures the `Resource` to close in response to one or more `CloseSource` instances.
    * `CloseSource` can be another `Resource` or an `AbortSignal`.
+   *
+   * This is a no-op when the `Resource` is already closed, or when the `options.signal` is already aborted:
+   * the call is silently ignored and the `Resource` is returned unchanged.
    *
    * @param {ResourceCloseWithInput} closeSources - A list of sources that will trigger the resource's closure.
    *                                                These can include `Resource` instances or `AbortSignal` objects.

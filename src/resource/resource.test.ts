@@ -24,7 +24,7 @@ describe('Resource', () => {
 
     expect(resource.closeSignal.aborted).toBe(true);
     expect(resource.closeSignal.reason).toBe('test');
-    expect(() => resource.throwIfClosed()).toThrow();
+    expect(() => resource.throwIfClosed()).toThrow(new Error('Resource closed', { cause: 'test' }));
     expect(abortSpy).toHaveBeenCalledTimes(1);
     expect(closedSpy).toHaveBeenCalledTimes(0);
 

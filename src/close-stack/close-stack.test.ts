@@ -284,6 +284,40 @@ describe('CloseStack', () => {
         resource.close('test');
         expect(() => closeStack.adoptResource(new Resource())).toThrow();
       });
+
+      it('should throw if closed, even with an aborted signal', async () => {
+        resource.close('test');
+        expect(() =>
+          closeStack.adoptResource(new Resource(), { signal: AbortSignal.abort('test') }),
+        ).toThrow();
+      });
+
+      it('should not emit unhandled rejection when an adopted resource close fails', async () => {
+        const unhandledRejectionSpy = vi.fn();
+        const onUnhandledRejection = (reason: unknown): void => {
+          unhandledRejectionSpy(reason);
+        };
+
+        process.on('unhandledRejection', onUnhandledRejection);
+
+        try {
+          const child = new Resource((): Promise<void> => Promise.reject(new Error('child close failed')));
+
+          closeStack.adoptResource(child);
+
+          child.closed.catch((): void => {}); // the user observes the child's close error
+
+          await expect(resource.close('test')).rejects.toThrow('child close failed');
+
+          await new Promise((resolve: (value: unknown) => void): void => {
+            setTimeout(resolve, 10);
+          });
+        } finally {
+          process.off('unhandledRejection', onUnhandledRejection);
+        }
+
+        expect(unhandledRejectionSpy).toHaveBeenCalledTimes(0);
+      });
     });
 
     describe('addEventListener', () => {
@@ -296,6 +330,12 @@ describe('CloseStack', () => {
 
         expect(spy).toHaveBeenCalledTimes(1);
         expect(spy).toHaveBeenNthCalledWith(1, event);
+      });
+
+      it('should throw if closed', async () => {
+        resource.close('test');
+
+        expect(() => closeStack.addEventListener(new EventTarget(), 'click', () => {})).toThrow();
       });
     });
 

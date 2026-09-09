@@ -7,7 +7,22 @@ import { type TeardownFunction } from './types/methods/add-teardown/teardown-fun
 import { type AsyncTask } from './types/methods/run-task/async-task.ts';
 
 /**
- * Manages async operations in the context of a `CloseSource`.
+ * Manages async operations (tasks, teardowns, adopted resources) in the context of a `CloseSource`.
+ *
+ * A `CloseStack` never aborts its `closeSource` by itself: its lifetime is externally managed
+ * by its `closeSource` — it is not usable with `await using`.
+ * The `closeSource`'s closure MUST trigger `close` — typically from the source's closure hook
+ * (e.g. `OnCloseResource` for a `Resource`) — which then:
+ *
+ * 1) awaits all pending tasks (`runTask`)
+ * 2) awaits all `concurrent` teardowns (`addTeardown`, adopted `Resource`s)
+ * 3) awaits all `sequential` teardowns, in reverse order of addition
+ *
+ * @example
+ * ```ts
+ * const resource = new Resource((reason): Promise<void> => closeStack.close(reason));
+ * const closeStack = new CloseStack(resource);
+ * ```
  */
 export class CloseStack {
   /**
@@ -106,11 +121,11 @@ export class CloseStack {
   /**
    * Throws an error if the CloseStack is closing or closed.
    *
-   * @throws {Error} If closing or closed.
+   * @throws {Error} If closing or closed, with the close reason as `cause`.
    */
   throwIfClosed(): void {
-    if (this.#closed || this.#closeSignal.aborted) {
-      throw new Error('Closed.');
+    if (this.#closeSignal.aborted) {
+      throw new Error('Closed.', { cause: this.#closeSignal.reason });
     }
   }
 
@@ -193,18 +208,24 @@ export class CloseStack {
   /**
    * Adopts a `Resource` to associate its lifecycle with this CloseStack:
    *
-   * - closes `resource` when this CloseStack closes
-   *
+   * - initiates `resource`'s closure as soon as this CloseStack's `closeSource` aborts
+   *   (i.e., when the CloseStack starts closing)
+   * - awaits `resource`'s full closure during the `concurrent` teardown phase,
+   *   before running the `sequential` teardowns
+   * - if `resource` closes by itself before this CloseStack closes, the adoption is undone
    *
    * @template GResource - The type of the resource.
    * @param {GResource} resource - The resource to adopt.
    * @param {Abortable} [options] - Optional abortable signal to remove the adoption.
    * @returns {GResource} The adopted resource for chaining.
+   * @throws {Error} If the CloseStack is closed, regardless of `options.signal`.
    */
   adoptResource<GResource extends Resource>(
     resource: GResource,
     { signal }: Abortable = {},
   ): GResource {
+    this.throwIfClosed();
+
     if (!signal?.aborted) {
       const controller: AbortController = new AbortController();
 
@@ -218,9 +239,12 @@ export class CloseStack {
         },
       );
 
-      resource.closed.then((): void => {
-        controller.abort();
-      });
+      resource.closed.then(
+        (): void => {
+          controller.abort();
+        },
+        (): void => {},
+      );
 
       resource.closesWith(this.#closeSignal, {
         signal,
@@ -240,6 +264,7 @@ export class CloseStack {
    * @param {AddEventListenerOptions} [options] An optional parameter containing configuration options for the event listener, such as `capture`, `once`, and `passive`.
    *                                            It also supports an additional `signal` option for aborting the listener.
    * @return {void} This method does not return any value.
+   * @throws {Error} If the CloseStack is closed.
    */
   addEventListener<GEvent>(
     target: EventTarget,
@@ -247,6 +272,8 @@ export class CloseStack {
     listener: (event: GEvent) => void,
     options?: AddEventListenerOptions,
   ): void {
+    this.throwIfClosed();
+
     target.addEventListener(type, listener as EventListener, {
       ...options,
       signal: mergeAbortSignals([this.#closeSignal, options?.signal]),
@@ -260,13 +287,18 @@ export class CloseStack {
    * 2) awaits concurrently all `concurrent` teardowns
    * 3) awaits sequentially in reverse order all `sequential` teardowns
    *
-   * @param {unknown} reason - The reason for closing the Resource.
+   * This MUST be called exactly once, when the `closeSource` closes — typically from the
+   * `closeSource`'s closure hook (e.g. `OnCloseResource`): calling it again, or before the
+   * `closeSource` is aborted, is a programming error and throws.
+   *
+   * @param {unknown} reason - The reason for closing the CloseStack.
    * @returns {Promise<void>} A promise that resolves once all teardowns and tasks are handled.
-   * @throws {Error} If called outside the context of the Resource's `close` function, or if it is already closed.
+   * @throws {Error} If already closed (with the initial close reason as `cause`),
+   *                 or if the `closeSource` is not aborted yet.
    */
   async close(reason: unknown): Promise<void> {
     if (this.#closed) {
-      throw new Error('Already closed.');
+      throw new Error('Already closed.', { cause: this.#closeSignal.reason });
     }
 
     if (!this.#closeSignal.aborted) {
