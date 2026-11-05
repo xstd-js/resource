@@ -25,16 +25,17 @@ npm install @xstd/resource --save
 
 ## 💡 Overview
 
-This package provides two building blocks to model _things that live_:
+This package provides a few building blocks to model _things that live_ — and to signal how their life ends:
 
 - **`Resource`** — represents something **live** (a file handle, a database connection, a subscription, …) that must be cleaned up when it's no longer needed, to avoid resource leaks.
 - **`CloseStack`** — groups tasks, teardowns and adopted resources into a single, ordered cleanup sequence, driven by a `CloseSource` (a `Resource` or an `AbortSignal`).
+- **`NormalClosure`** — an error signal marking a closure as **normal** (intentional): the default close reason of a `Resource` closed without an explicit one, detectable in cleanup hooks via `reason instanceof NormalClosure`.
 
-Both share the same mental model:
+They share the same mental model:
 
 - an **`AbortSignal`** (`closeSignal`) is aborted as soon as the closing **starts**,
 - a **promise** (`closed`) settles once the cleanup has **fully completed**,
-- a **reason** (any value) flows through the whole chain, from `close('...')` to every cleanup hook.
+- a **reason** (any value) flows through the whole chain, from `close('...')` to every cleanup hook — when a `Resource` closes without one, a `NormalClosure` signal is used instead.
 
 ## 🚀 `Resource`
 
@@ -54,10 +55,10 @@ const connection: Resource = new Resource(async (): Promise<void> => {
 
 A `Resource` exposes both a signal and a promise, matching the two phases of its death:
 
-| Phase | Observer | Typical use |
-| --- | --- | --- |
-| closing **starts** | `resource.closeSignal` (`AbortSignal`) | cancel in-flight work, stop listening |
-| cleanup **completed** | `resource.closed` (`Promise<void>`) | wait until it's safe to move on |
+| Phase                 | Observer                               | Typical use                           |
+| --------------------- | -------------------------------------- | ------------------------------------- |
+| closing **starts**    | `resource.closeSignal` (`AbortSignal`) | cancel in-flight work, stop listening |
+| cleanup **completed** | `resource.closed` (`Promise<void>`)    | wait until it's safe to move on       |
 
 ```ts
 // the signal plugs anywhere an AbortSignal is expected:
@@ -87,6 +88,8 @@ async function readConfig(path: string): Promise<string> {
 }
 ```
 
+Disposal closes the `Resource` without a reason: the closure is marked as **normal**, using a `NormalClosure` signal as the close reason.
+
 ### Closing with a reason
 
 `close` accepts any value as _reason_. It propagates to the signal and to the closure function, so everyone involved knows **why** things are stopping.
@@ -99,6 +102,14 @@ const resource: Resource = new Resource((reason: unknown): void => {
 await resource.close('job done');
 
 resource.closeSignal.reason; // 'job done'
+```
+
+When no reason is provided, a `NormalClosure` signal is used instead — a `Resource` closure always carries a reason:
+
+```ts
+await resource.close();
+
+resource.closeSignal.reason; // NormalClosure — 'Resource closed normally'
 ```
 
 `close` is idempotent: calling it again returns the same promise.
@@ -145,6 +156,33 @@ try {
 resource.throwIfClosed(); // Error('Resource closed', { cause: 'job done' })
 ```
 
+## ✅ `NormalClosure`
+
+An error signal indicating a **normal** (expected) closure.
+
+It marks a closure as intentional. It's used as the close `reason` of a `Resource`:
+
+- **by default**, when the `Resource` is closed without an explicit reason — including through `await using` (i.e. `Symbol.asyncDispose`),
+- **explicitly**, by passing an instance to `close` — with an optional custom message and `cause`.
+
+Cleanup hooks and consumers can then distinguish a clean shutdown from an abnormal one by checking `reason instanceof NormalClosure`.
+
+```ts
+import { NormalClosure, Resource } from '@xstd/resource';
+
+// explicit, with a custom message and a cause:
+await resource.close(new NormalClosure('pool drained', { cause: signal.reason }));
+
+// detectable in any cleanup hook receiving the close reason:
+closeStack.addTeardown((reason: unknown): void => {
+  if (reason instanceof NormalClosure) {
+    console.log('clean shutdown');
+  }
+});
+```
+
+It extends `Error`, so a `NormalClosure` also carries a stack trace when it flows through promise rejections.
+
 ## 🧹 `CloseStack`
 
 A `CloseStack` manages async operations (tasks, teardowns, adopted resources) in the context of a `CloseSource`.
@@ -155,7 +193,9 @@ It **never aborts its `closeSource` by itself**: its lifetime is externally mana
 import { CloseStack, Resource } from '@xstd/resource';
 
 let closeStack: CloseStack;
-const resource: Resource = new Resource((reason: unknown): Promise<void> => closeStack.close(reason));
+const resource: Resource = new Resource((reason: unknown): Promise<void> =>
+  closeStack.close(reason),
+);
 closeStack = new CloseStack(resource);
 
 // closing `resource` now runs the whole cleanup sequence:
@@ -195,6 +235,8 @@ closeStack.addTeardown((): void => {
 closeStack.addTeardown((): Promise<void> => logger.flush(), { mode: 'concurrent' });
 ```
 
+Teardowns receive the close `reason` — check for `NormalClosure` to detect a clean shutdown.
+
 An optional `signal` removes a teardown before it runs (undo the registration).
 
 ### Adopting resources: `adoptResource`
@@ -228,29 +270,37 @@ If teardowns fail, `close` rejects — sequentially with a `SuppressedError` cha
 
 ### `Resource`
 
-| Member | Description |
-| --- | --- |
-| `new Resource(close?)` | Creates a resource. `close` is called once, on closure. |
-| `closeSignal: AbortSignal` | Aborted when the resource is closing or closed. |
-| `closed: Promise<void>` | Resolves when fully closed; rejects if the closure function fails. |
-| `throwIfClosed(): void` | Throws (with the close reason as `cause`) if closing or closed. |
-| `close(reason?): Promise<void>` | Initiates closure (idempotent); resolves when fully closed. |
-| `[Symbol.asyncDispose](): Promise<void>` | For `await using`; calls `close()`. |
-| `closesWith(sources, options?): this` | Closes when `Resource`/`AbortSignal` source(s) close; `options.signal` un-binds. |
+| Member                                   | Description                                                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `new Resource(close?)`                   | Creates a resource. `close` is called once, on closure.                                           |
+| `closeSignal: AbortSignal`               | Aborted when the resource is closing or closed.                                                   |
+| `closed: Promise<void>`                  | Resolves when fully closed; rejects if the closure function fails.                                |
+| `throwIfClosed(): void`                  | Throws (with the close reason as `cause`) if closing or closed.                                   |
+| `close(reason?): Promise<void>`          | Initiates closure (idempotent); resolves when fully closed. Defaults to a `NormalClosure` reason. |
+| `[Symbol.asyncDispose](): Promise<void>` | For `await using`; calls `close()` — a normal closure.                                            |
+| `closesWith(sources, options?): this`    | Closes when `Resource`/`AbortSignal` source(s) close; `options.signal` un-binds.                  |
 
 ### `CloseStack`
 
-| Member | Description |
-| --- | --- |
-| `new CloseStack(closeSource)` | Tracks a `Resource` or `AbortSignal` as lifecycle source. |
-| `static sequentially(factories, ...args)` | Runs functions one after another; errors chained via `SuppressedError`. |
-| `static concurrently(factories, ...args)` | Runs functions at once; errors aggregated into an `AggregateError`. |
-| `throwIfClosed(): void` | Throws (with the close reason as `cause`) if closing or closed. |
-| `runTask(task, options?)` | Runs a signal-aware task; awaited before teardowns at close. |
-| `addTeardown(teardown, options?)` | Registers cleanup; `mode: 'sequential' \| 'concurrent'`, `signal` un-registers. |
-| `adoptResource(resource, options?)` | Ties a `Resource`'s lifetime to the stack; `signal` un-adopts. |
-| `addEventListener(target, type, listener, options?)` | Listens until the stack closes; throws if closed. |
-| `close(reason): Promise<void>` | Runs the cleanup sequence. **Exactly once**, from the source's closure hook. |
+| Member                                               | Description                                                                     |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `new CloseStack(closeSource)`                        | Tracks a `Resource` or `AbortSignal` as lifecycle source.                       |
+| `static sequentially(factories, ...args)`            | Runs functions one after another; errors chained via `SuppressedError`.         |
+| `static concurrently(factories, ...args)`            | Runs functions at once; errors aggregated into an `AggregateError`.             |
+| `throwIfClosed(): void`                              | Throws (with the close reason as `cause`) if closing or closed.                 |
+| `runTask(task, options?)`                            | Runs a signal-aware task; awaited before teardowns at close.                    |
+| `addTeardown(teardown, options?)`                    | Registers cleanup; `mode: 'sequential' \| 'concurrent'`, `signal` un-registers. |
+| `adoptResource(resource, options?)`                  | Ties a `Resource`'s lifetime to the stack; `signal` un-adopts.                  |
+| `addEventListener(target, type, listener, options?)` | Listens until the stack closes; throws if closed.                               |
+| `close(reason): Promise<void>`                       | Runs the cleanup sequence. **Exactly once**, from the source's closure hook.    |
+
+### `NormalClosure`
+
+| Member                                  | Description                                                                                                      |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `new NormalClosure(message?, options?)` | Creates the signal; default message: `'Resource closed normally'`. `options.cause` chains the triggering reason. |
+| `new NormalClosure(options?)`           | Same, with the default message.                                                                                  |
+| `name`                                  | `'NormalClosure'`.                                                                                               |
 
 ### Types
 

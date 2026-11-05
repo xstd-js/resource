@@ -1,4 +1,5 @@
 import { type Abortable, mergeAbortSignals } from '@xstd/abortable';
+import { NormalClosure } from '../normal-closure/normal-closure.ts';
 import { type CloseSource } from './types/close-source.ts';
 import { type OnCloseResource } from './types/on-close-resource.ts';
 import { type ResourceCloseWithInput } from './types/resource-close-with-input.ts';
@@ -64,6 +65,9 @@ export class Resource implements AsyncDisposable {
    * Closes the `Resource`, optionally providing a reason for the closure.
    * If a _closure function_ was provided during construction, it will be invoked.
    *
+   * When no `reason` is provided, a `NormalClosure` signal is used instead, marking the closure
+   * as normal: the _closure function_ receives it, and it's exposed as the `closeSignal`'s reason.
+   *
    * If the _closure function_ throws or rejects, the returned Promise (and `closed`) rejects.
    * Since both share the same Promise instance, observing either one marks the rejection as handled;
    * an unobserved close error is reported as an unhandled rejection.
@@ -73,10 +77,12 @@ export class Resource implements AsyncDisposable {
    */
   close(reason?: unknown): Promise<void> {
     if (!this.#controller.signal.aborted) {
-      this.#controller.abort(reason);
+      const closeReason: unknown = reason === undefined ? new NormalClosure() : reason;
+
+      this.#controller.abort(closeReason);
 
       this.#closed.resolve(
-        this.#close === undefined ? undefined : Promise.try(this.#close, reason),
+        this.#close === undefined ? undefined : Promise.try(this.#close, closeReason),
       );
     }
 
@@ -86,6 +92,9 @@ export class Resource implements AsyncDisposable {
   /**
    * Implements the asynchronous disposal protocol.
    * Automatically closes the `Resource` when it goes out of scope or is used with `await using`.
+   *
+   * The `Resource` is closed without an explicit reason: the closure is then marked as normal
+   * with a `NormalClosure` reason (see `close`).
    *
    * @example
    * ```ts

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { NormalClosure } from '../normal-closure/normal-closure.ts';
 import { Resource } from './resource.ts';
 
 describe('Resource', () => {
@@ -33,6 +34,18 @@ describe('Resource', () => {
     expect(closedSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('should close with a "NormalClosure" reason when no reason is provided', async () => {
+    const closeHookSpy = vi.fn();
+    const resource = new Resource(closeHookSpy);
+
+    await resource.close();
+
+    expect(resource.closeSignal.aborted).toBe(true);
+    expect(resource.closeSignal.reason).toBeInstanceOf(NormalClosure);
+    expect(closeHookSpy).toHaveBeenCalledTimes(1);
+    expect(closeHookSpy).toHaveBeenCalledWith(resource.closeSignal.reason);
+  });
+
   it('should be disposable', async () => {
     const resource = new Resource();
 
@@ -45,6 +58,7 @@ describe('Resource', () => {
     await resource[Symbol.asyncDispose]();
 
     expect(resource.closeSignal.aborted).toBe(true);
+    expect(resource.closeSignal.reason).toBeInstanceOf(NormalClosure);
     expect(closedSpy).toHaveBeenCalledTimes(1);
   });
 
