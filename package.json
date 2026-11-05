@@ -10,11 +10,15 @@
     "type": "git",
     "url": "git+https://github.com/xstd-js/resource.git"
   },
-  "packageManager": "yarn@4.18.0",
+  "packageManager": "yarn@4.18.1",
   "main": "./index.js",
   "scripts": {
     "=== FB: BUILD ===": "",
     "fb:build": "fabrique build",
+    "=== FB: TEST ===": "",
+    "fb:test": "vitest run",
+    "fb:test:coverage": "vitest run --coverage",
+    "fb:bench": "vitest bench",
     "=== FB: CODE QUALITY ===": "",
     "fb:format": "yarn fb:format:fix",
     "fb:format:check": "prettier --check --ignore-unknown --config .prettierrc \"./**/*.{js,jsx,ts,tsx,html,css,scss,json,md}\"",
@@ -23,31 +27,24 @@
     "fb:check:types": "tsc -p tsconfig.json --noEmit",
     "=== FB: RELEASE ===": "",
     "fb:manual:release": "fabrique release",
-    "fb:ci:release": "fabrique ci release",
-    "=== FB: TEST ===": "",
-    "fb:test": "vitest run",
-    "fb:test:coverage": "vitest run --coverage",
-    "fb:bench": "vitest bench",
-    "=== FB: DOC ===": "",
-    "fb:typedoc": "typedoc --options typedoc.json --tsconfig tsconfig.json"
+    "fb:ci:release": "fabrique ci release"
   },
   "devDependencies": {
-    "@types/add": "^2",
-    "@types/node": "^26.1.2",
-    "@vitest/coverage-istanbul": "^4.1.10",
-    "fabrique": "2.0.12",
-    "prettier": "^3.9.6",
+    "@types/node": "^26.6.5",
+    "@vitest/coverage-istanbul": "^5.0.5",
+    "fabrique": "2.0.28",
+    "prettier": "^3.9.10",
     "prettier-plugin-organize-imports": "^4.3.0",
-    "typedoc": "^0.28.20",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
   },
   "access": "public",
   "dependencies": {
     "@xstd/abortable": "^1.2.3"
   },
   "fabrique": {
-    "version": "2.0.12",
+    "version": "2.0.28",
     "type": "lib"
   }
 }
