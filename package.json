@@ -24,27 +24,30 @@
     "fb:format:check": "prettier --check --ignore-unknown --config .prettierrc \"./**/*.{js,jsx,ts,tsx,html,css,scss,json,md}\"",
     "fb:format:fix": "prettier --write --ignore-unknown --config .prettierrc \"./**/*.{js,jsx,ts,tsx,html,css,scss,json,md}\"",
     "fb:check": "yarn fb:check:types && yarn fb:format:check",
-    "fb:check:types": "tsc -p tsconfig.json --noEmit",
+    "fb:check:types": "node node_modules/@typescript/native/bin/tsc -p tsconfig.json --noEmit",
     "=== FB: RELEASE ===": "",
     "fb:manual:release": "fabrique release",
-    "fb:ci:release": "fabrique ci release"
+    "fb:ci:release": "fabrique ci release",
+    "=== FB: INIT ===": "",
+    "fb:setup-github-repository": "fabrique setup-github-repository"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "@vitest/coverage-istanbul": "^5.0.5",
-    "fabrique": "2.0.28",
-    "prettier": "^3.9.10",
+    "@types/node": "^26.6.6",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "@vitest/coverage-istanbul": "^5.1.0",
+    "fabrique": "2.0.35",
+    "prettier": "^3.10.1",
     "prettier-plugin-organize-imports": "^4.3.0",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.4",
-    "vitest": "^5.0.5"
+    "typescript": "npm:typescript@~6.0.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
   },
   "access": "public",
   "dependencies": {
     "@xstd/abortable": "^1.2.3"
   },
   "fabrique": {
-    "version": "2.0.28",
+    "version": "2.0.35",
     "type": "lib"
   }
 }
