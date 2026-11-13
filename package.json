@@ -1,9 +1,18 @@
 {
   "name": "@xstd/resource",
-  "version": "0.4.2",
+  "version": "1.0.0",
   "type": "module",
   "description": "Objects with lifetime",
-  "keywords": [],
+  "keywords": [
+    "resource",
+    "lifetime",
+    "close",
+    "dispose",
+    "async-dispose",
+    "abortable",
+    "cleanup",
+    "teardown"
+  ],
   "author": "Valentin RICHARD",
   "license": "MIT",
   "repository": {
@@ -35,7 +44,7 @@
     "@types/node": "^26.6.6",
     "@typescript/native": "npm:typescript@^7.0.2",
     "@vitest/coverage-istanbul": "^5.1.0",
-    "fabrique": "2.0.35",
+    "fabrique": "2.0.36",
     "prettier": "^3.10.1",
     "prettier-plugin-organize-imports": "^4.3.0",
     "typescript": "npm:typescript@~6.0.3",
@@ -47,7 +56,7 @@
     "@xstd/abortable": "^1.2.3"
   },
   "fabrique": {
-    "version": "2.0.35",
+    "version": "2.0.36",
     "type": "lib"
   }
 }
