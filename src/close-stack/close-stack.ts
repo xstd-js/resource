@@ -1,5 +1,6 @@
 import { type Abortable, mergeAbortSignals } from '@xstd/abortable';
-import { type Resource } from '../resource/resource.ts';
+import { debugHooks } from '../debug/debug-hooks.private.ts';
+import { Resource } from '../resource/resource.ts';
 import { type CloseSource } from '../resource/types/close-source.ts';
 import { type CloseStackPromiseFactory } from './types/close-stack-promise-factory.ts';
 import { type AddTeardownOptions } from './types/methods/add-teardown/add-teardown-options.ts';
@@ -100,6 +101,7 @@ export class CloseStack {
   }
 
   #closed: boolean;
+  readonly #closeSource: CloseSource;
   readonly #closeSignal: AbortSignal;
   /** The pending tasks, in registration order. */
   readonly #tasks: Set<Promise<unknown>>;
@@ -120,6 +122,7 @@ export class CloseStack {
    */
   constructor(closeSource: CloseSource) {
     this.#closed = false;
+    this.#closeSource = closeSource;
     this.#closeSignal = closeSource instanceof AbortSignal ? closeSource : closeSource.closeSignal;
     this.#tasks = new Set();
     this.#concurrentTeardowns = new Set();
@@ -258,6 +261,15 @@ export class CloseStack {
       resource.closesWith(this.#closeSignal, {
         signal,
       });
+
+      if (this.#closeSource instanceof Resource) {
+        debugHooks.onResourceLink?.({
+          from: resource,
+          to: this.#closeSource,
+          type: 'adopted-by',
+          signal,
+        });
+      }
     }
 
     return resource;

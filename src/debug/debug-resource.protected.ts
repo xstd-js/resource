@@ -1,6 +1,7 @@
 /* istanbul ignore file -- @preserve */
 
 import { type Resource } from '../resource/resource.ts';
+import { nameResource } from './resource-graph.protected.ts';
 
 export function preferDarkColorScheme(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -29,6 +30,8 @@ export function debugResource<GResource extends Resource>(
   name: string,
   color: string = generateRandomColor(),
 ): GResource {
+  nameResource(resource, name);
+
   console.log(`%c[OPEN]%c ${name}`, `color: ${COLOR_SCHEME.open}`, `color: ${color}`);
 
   resource.closeSignal.addEventListener(

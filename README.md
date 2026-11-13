@@ -266,6 +266,36 @@ closeStack.addEventListener(emitter, 'message', (event: MessageEvent): void => {
 
 If teardowns fail, `close` rejects — sequentially with a `SuppressedError` chain (the last error thrown wins), concurrently with an `AggregateError` (a single error is rethrown as-is). The stack remains closed either way.
 
+## 🐞 Debugging
+
+Debug helpers live in a separate entry point: `@xstd/resource/protected`. They are opt-in: if you never import it, nothing is recorded and the debug code is tree-shaken away.
+
+### Lifecycle logs: `debugResource`
+
+Logs `[OPEN]`, `[CLOSING]` (with the close reason) and `[CLOSED]` (or `[CLOSED (with error)]`) as the resource lives:
+
+```ts
+import { debugResource } from '@xstd/resource/protected';
+
+const connection: Resource = debugResource(new Resource(...), 'connection');
+```
+
+### Live resource graph
+
+Once enabled, every `closesWith` and `adoptResource` link is **recorded automatically** — no manual bookkeeping:
+
+```ts
+import { enableResourceGraph, resourceGraph } from '@xstd/resource/protected';
+
+enableResourceGraph(); // records links created from now on
+
+// ...later, dump a mermaid flowchart of the live links:
+console.log(resourceGraph()); // paste the output into mermaid.live
+```
+
+- links are dropped automatically as soon as one of their ends closes (or their un-bind `signal` aborts): the graph only shows the **live** resources,
+- `debugResource` also names the graph nodes after its `name` argument.
+
 ## 📚 API
 
 ### `Resource`
