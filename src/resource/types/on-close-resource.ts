@@ -10,4 +10,7 @@ export interface OnCloseResource {
   (reason: unknown): PromiseLike<void> | void;
 }
 
+/**
+ * An `OnCloseResource` that may be absent: `undefined` or `void` are allowed.
+ */
 export type OptionalOnCloseResource = OnCloseResource | undefined | void;

@@ -7,17 +7,6 @@ describe('CloseStack', () => {
   let resource: Resource;
   let closeStack: CloseStack;
 
-  (globalThis as any).SuppressedError ??= class SuppressedError extends Error {
-    error: any;
-    suppressed: any;
-
-    constructor(error: any, suppressed: any, message?: string) {
-      super(message);
-      this.error = error;
-      this.suppressed = suppressed;
-    }
-  };
-
   beforeEach((): void => {
     resource = new Resource((reason: unknown) => closeStack.close(reason));
     closeStack = new CloseStack(resource);
@@ -301,7 +290,9 @@ describe('CloseStack', () => {
         process.on('unhandledRejection', onUnhandledRejection);
 
         try {
-          const child = new Resource((): Promise<void> => Promise.reject(new Error('child close failed')));
+          const child = new Resource((): Promise<void> =>
+            Promise.reject(new Error('child close failed')),
+          );
 
           closeStack.adoptResource(child);
 

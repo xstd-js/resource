@@ -1,4 +1,5 @@
 import { type Abortable, mergeAbortSignals } from '@xstd/abortable';
+import { debugHooks } from '../debug/debug-hooks.private.ts';
 import { NormalClosure } from '../normal-closure/normal-closure.ts';
 import { type CloseSource } from './types/close-source.ts';
 import { type OnCloseResource } from './types/on-close-resource.ts';
@@ -118,6 +119,13 @@ export class Resource implements AsyncDisposable {
    */
   #closesWith(closeSource: CloseSource, abortSignal: AbortSignal | undefined): void {
     if (closeSource instanceof Resource) {
+      debugHooks.onResourceLink?.({
+        from: this,
+        to: closeSource,
+        type: 'closes-with',
+        signal: abortSignal,
+      });
+
       closeSource = closeSource.closeSignal;
     }
 
