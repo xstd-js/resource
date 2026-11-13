@@ -296,6 +296,14 @@ console.log(resourceGraph()); // paste the output into mermaid.live
 - links are dropped automatically as soon as one of their ends closes (or their un-bind `signal` aborts): the graph only shows the **live** resources,
 - `debugResource` also names the graph nodes after its `name` argument.
 
+Or open [mermaid.live](https://mermaid.live) directly with the graph pre-loaded (returns the URL, so it also works outside a browser):
+
+```ts
+import { openResourceGraph } from '@xstd/resource/protected';
+
+await openResourceGraph();
+```
+
 ## 📚 API
 
 ### `Resource`
