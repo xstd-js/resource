@@ -75,7 +75,7 @@ export class CloseStack {
     ...args: GArguments
   ): Promise<void> {
     return this.#concurrentPromises(
-      Array.from(promiseFactories, (factory: (...args: GArguments) => PromiseLike<any> | any) => {
+      Array.from(promiseFactories, (factory: CloseStackPromiseFactory<GArguments>) => {
         return Promise.try(factory, ...args);
       }),
     );
@@ -101,9 +101,17 @@ export class CloseStack {
 
   #closed: boolean;
   readonly #closeSignal: AbortSignal;
-  readonly #tasks: Promise<unknown>[];
-  readonly #concurrentTeardowns: TeardownFunction[];
-  readonly #sequentialTeardowns: TeardownFunction[];
+  /** The pending tasks, in registration order. */
+  readonly #tasks: Set<Promise<unknown>>;
+  /**
+   * The `concurrent` teardowns, in registration order.
+   *
+   * A `Set` supports O(1) removals (un-registration) while preserving the
+   * insertion order (guaranteed by the specification).
+   */
+  readonly #concurrentTeardowns: Set<TeardownFunction>;
+  /** The `sequential` teardowns, in registration order (executed in reverse order). */
+  readonly #sequentialTeardowns: Set<TeardownFunction>;
 
   /**
    * Creates a new instance of `CloseStack`.
@@ -113,9 +121,9 @@ export class CloseStack {
   constructor(closeSource: CloseSource) {
     this.#closed = false;
     this.#closeSignal = closeSource instanceof AbortSignal ? closeSource : closeSource.closeSignal;
-    this.#tasks = [];
-    this.#concurrentTeardowns = [];
-    this.#sequentialTeardowns = [];
+    this.#tasks = new Set();
+    this.#concurrentTeardowns = new Set();
+    this.#sequentialTeardowns = new Set();
   }
 
   /**
@@ -125,7 +133,7 @@ export class CloseStack {
    */
   throwIfClosed(): void {
     if (this.#closeSignal.aborted) {
-      throw new Error('Closed.', { cause: this.#closeSignal.reason });
+      throw new Error('CloseStack closed', { cause: this.#closeSignal.reason });
     }
   }
 
@@ -156,13 +164,13 @@ export class CloseStack {
         ? Promise.try(task, mergeAbortSignals([this.#closeSignal, controller.signal, signal]))
         : Promise.resolve(task);
 
-    this.#tasks.push(taskPromise);
+    this.#tasks.add(taskPromise);
 
     try {
       return await taskPromise;
     } finally {
       controller.abort();
-      this.#tasks.splice(this.#tasks.indexOf(taskPromise), 1);
+      this.#tasks.delete(taskPromise);
     }
   }
 
@@ -185,15 +193,16 @@ export class CloseStack {
     this.throwIfClosed();
 
     if (!signal?.aborted) {
-      const list: TeardownFunction[] =
+      const teardowns: Set<TeardownFunction> =
         mode === 'sequential' ? this.#sequentialTeardowns : this.#concurrentTeardowns;
 
-      list.push(teardown);
+      teardowns.add(teardown);
 
       const end = (): void => {
         signal!.removeEventListener('abort', end);
-        // NOTE: can be safely removed from the list while closing
-        list.splice(list.indexOf(teardown), 1);
+        // NOTE: can be safely removed while this CloseStack is closing:
+        // each phase captures its teardowns only when it begins.
+        teardowns.delete(teardown);
       };
 
       signal?.addEventListener('abort', end);
@@ -307,17 +316,29 @@ export class CloseStack {
 
     this.#closed = true;
 
-    await CloseStack.sequentially(
-      [
-        (): Promise<any> => {
-          return Promise.allSettled(this.#tasks);
-        },
-        (reason: unknown): Promise<void> => {
-          return CloseStack.concurrently(this.#concurrentTeardowns, reason);
-        },
-        ...this.#sequentialTeardowns.toReversed(),
-      ],
-      reason,
-    );
+    await CloseStack.sequentially(this.#closeSequence(), reason);
+  }
+
+  /**
+   * Lazily creates the sequence of promise factories executed by `close`:
+   *
+   * 1. awaiting all pending tasks
+   * 2. running all `concurrent` teardowns
+   * 3. running all `sequential` teardowns in reverse order of addition
+   *
+   * The factories are pulled one by one as the sequence unfolds, and each phase
+   * captures its teardowns only when it begins: un-registering a teardown
+   * (via its `options.signal`) remains possible until its phase has started.
+   */
+  *#closeSequence(): Generator<CloseStackPromiseFactory<[unknown]>> {
+    yield (): Promise<PromiseSettledResult<unknown>[]> => {
+      return Promise.allSettled(this.#tasks);
+    };
+
+    yield (reason: unknown): Promise<void> => {
+      return CloseStack.concurrently(this.#concurrentTeardowns, reason);
+    };
+
+    yield* [...this.#sequentialTeardowns].toReversed();
   }
 }
