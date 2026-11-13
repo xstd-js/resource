@@ -23,6 +23,9 @@ yarn add @xstd/resource
 npm install @xstd/resource --save
 ```
 
+> [!NOTE]
+> Requires a runtime exposing ES2025's `Promise.try` (Node.js 23+ or any recent browser).
+
 ## 💡 Overview
 
 This package provides a few building blocks to model _things that live_ — and to signal how their life ends:
@@ -210,7 +213,7 @@ When `close` is called, the sequence is:
 
 ### Running tasks: `runTask`
 
-Tasks are started immediately and receive a signal aborted when the task completes, when the `CloseStack` closes, or when the optional `signal` aborts.
+Tasks are started immediately and receive a signal aborted when the task completes, when the `CloseStack` closes, or when the optional `signal` aborts. A bare `Promise` may also be passed instead of a function.
 
 ```ts
 const users: User[] = await closeStack.runTask(async (signal: AbortSignal): Promise<User[]> => {
@@ -218,7 +221,7 @@ const users: User[] = await closeStack.runTask(async (signal: AbortSignal): Prom
 });
 ```
 
-When the `CloseStack` closes, pending tasks are awaited (fulfilled or rejected) **before** any teardown runs — closing never yanks the rug under in-flight work.
+When the `CloseStack` closes, pending tasks are awaited (fulfilled or rejected) **before** any teardown runs — closing never yanks the rug under in-flight work. Task rejections are **not** re-thrown by `close`: they are reported to the `runTask` caller, who is expected to handle them.
 
 ### Adding teardowns: `addTeardown`
 
@@ -237,7 +240,7 @@ closeStack.addTeardown((): Promise<void> => logger.flush(), { mode: 'concurrent'
 
 Teardowns receive the close `reason` — check for `NormalClosure` to detect a clean shutdown.
 
-An optional `signal` removes a teardown before it runs (undo the registration).
+An optional `signal` removes a teardown before it runs (undo the registration). Un-registering stays effective until the teardown's phase begins: once the close sequence has reached it, the teardown runs anyway.
 
 ### Adopting resources: `adoptResource`
 
@@ -349,14 +352,20 @@ interface OnCloseResource {
   (reason: unknown): PromiseLike<void> | void;
 }
 
+type OptionalOnCloseResource = OnCloseResource | undefined | void;
+
 type ResourceCloseWithInput = CloseSource | readonly (CloseSource | undefined)[];
 
 interface TeardownFunction {
-  (reason: unknown): PromiseLike<any> | any;
+  (reason: unknown): unknown;
 }
 
 interface AsyncTask<GReturn> {
   (signal: AbortSignal): PromiseLike<GReturn> | GReturn;
+}
+
+interface CloseStackPromiseFactory<GArguments extends unknown[]> {
+  (...args: GArguments): unknown;
 }
 ```
 
@@ -365,7 +374,7 @@ interface AsyncTask<GReturn> {
 > [!WARNING]
 > Experimental.
 
-Factories `Resource` instances from arguments:
+Creates `Resource` instances from arguments:
 
 ```ts
 import { ResourceFactory } from '@xstd/resource';
